@@ -155,8 +155,12 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Parse the JSON response
-    const analysis = JSON.parse(content);
+    // Parse the JSON response - strip markdown code fences if present
+    let jsonContent = content.trim();
+    if (jsonContent.startsWith("```")) {
+      jsonContent = jsonContent.replace(/^```(?:json)?\s*\n?/, "").replace(/\n?```\s*$/, "");
+    }
+    const analysis = JSON.parse(jsonContent);
 
     // Validate required fields
     if (!analysis.emotions || !analysis.global || !analysis.bass || !analysis.lead || !analysis.arp) {
