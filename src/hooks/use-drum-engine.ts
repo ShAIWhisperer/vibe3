@@ -55,29 +55,43 @@ export function useDrumEngine() {
     kitId: 'house',
     pattern: getDefaultPattern(),
     channelMix: createDefaultChannelMix(),
-    masterVolume: 0.85,
+    masterVolume: 1.0,
     swing: 15,
     enabled: true
   });
   
+  const compressorRef = useRef<DynamicsCompressorNode | null>(null);
+
   // Initialize audio
   const initAudio = useCallback(async (externalCtx?: AudioContext, externalOutput?: GainNode) => {
     if (audioCtxRef.current && drumSynthRef.current) return;
-    
+
     const ctx = externalCtx || new AudioContext();
     audioCtxRef.current = ctx;
-    
+
+    // Create compressor for punchy drums
+    const compressor = ctx.createDynamicsCompressor();
+    compressor.threshold.value = -12;
+    compressor.knee.value = 4;
+    compressor.ratio.value = 4;
+    compressor.attack.value = 0.002;
+    compressor.release.value = 0.15;
+    compressorRef.current = compressor;
+
     // Create master gain
     const masterGain = ctx.createGain();
     masterGain.gain.value = drumState.masterVolume;
     masterGainRef.current = masterGain;
-    
+
+    // Chain: channels → masterGain → compressor → output
+    masterGain.connect(compressor);
+
     // Connect to external output or destination
     if (externalOutput) {
-      masterGain.connect(externalOutput);
+      compressor.connect(externalOutput);
       outputNodeRef.current = externalOutput;
     } else {
-      masterGain.connect(ctx.destination);
+      compressor.connect(ctx.destination);
     }
     
     // Create channel gains and pans
@@ -106,36 +120,50 @@ export function useDrumEngine() {
   const connectToMixer = useCallback((ctx: AudioContext, outputNode: GainNode) => {
     audioCtxRef.current = ctx;
     outputNodeRef.current = outputNode;
-    
+
+    // Create compressor if not exists
+    if (!compressorRef.current) {
+      const compressor = ctx.createDynamicsCompressor();
+      compressor.threshold.value = -12;
+      compressor.knee.value = 4;
+      compressor.ratio.value = 4;
+      compressor.attack.value = 0.002;
+      compressor.release.value = 0.15;
+      compressorRef.current = compressor;
+    }
+
     // Create master gain if not exists
     if (!masterGainRef.current) {
       const masterGain = ctx.createGain();
       masterGain.gain.value = drumState.masterVolume;
-      masterGain.connect(outputNode);
+      masterGain.connect(compressorRef.current);
+      compressorRef.current.connect(outputNode);
       masterGainRef.current = masterGain;
     } else {
       masterGainRef.current.disconnect();
-      masterGainRef.current.connect(outputNode);
+      compressorRef.current.disconnect();
+      masterGainRef.current.connect(compressorRef.current);
+      compressorRef.current.connect(outputNode);
     }
-    
+
     // Recreate channel routing
     channelGainsRef.current = [];
     channelPansRef.current = [];
-    
+
     for (let i = 0; i < 8; i++) {
       const gain = ctx.createGain();
       const pan = ctx.createStereoPanner();
-      
+
       gain.gain.value = drumState.channelMix[i]?.volume ?? 0.8;
       pan.pan.value = drumState.channelMix[i]?.pan ?? 0;
-      
+
       gain.connect(pan);
       pan.connect(masterGainRef.current!);
-      
+
       channelGainsRef.current.push(gain);
       channelPansRef.current.push(pan);
     }
-    
+
     // Create drum synth
     if (!drumSynthRef.current) {
       drumSynthRef.current = createDrumSynth(ctx);
@@ -173,37 +201,50 @@ export function useDrumEngine() {
   }, [drumState.kitId, drumState.channelMix, initAudio]);
   
   // Connect to an external audio context (from main synth)
-  const connectToContext = useCallback((ctx: AudioContext, masterGain: GainNode) => {
+  // Drums connect directly to ctx.destination (parallel to synth, not through synth master)
+  const connectToContext = useCallback((ctx: AudioContext, _synthMasterGain: GainNode) => {
     // Skip if already connected to this context
     if (audioCtxRef.current === ctx && drumSynthRef.current) return;
-    
+
     audioCtxRef.current = ctx;
-    
-    // Create master gain for drums
+
+    // Create compressor for punchy drums
+    if (!compressorRef.current) {
+      const compressor = ctx.createDynamicsCompressor();
+      compressor.threshold.value = -12;
+      compressor.knee.value = 4;
+      compressor.ratio.value = 4;
+      compressor.attack.value = 0.002;
+      compressor.release.value = 0.15;
+      compressorRef.current = compressor;
+    }
+
+    // Create master gain for drums — connect to destination directly, not through synth master
     if (!masterGainRef.current) {
       const drumMasterGain = ctx.createGain();
       drumMasterGain.gain.value = drumState.masterVolume;
-      drumMasterGain.connect(masterGain);
+      drumMasterGain.connect(compressorRef.current);
+      compressorRef.current.connect(ctx.destination);
       masterGainRef.current = drumMasterGain;
     }
-    
+
     // Create channel routing if not exists
     if (channelGainsRef.current.length === 0) {
       for (let i = 0; i < 8; i++) {
         const gain = ctx.createGain();
         const pan = ctx.createStereoPanner();
-        
+
         gain.gain.value = drumState.channelMix[i]?.volume ?? 1.0;
         pan.pan.value = drumState.channelMix[i]?.pan ?? 0;
-        
+
         gain.connect(pan);
         pan.connect(masterGainRef.current!);
-        
+
         channelGainsRef.current.push(gain);
         channelPansRef.current.push(pan);
       }
     }
-    
+
     // Create drum synth
     if (!drumSynthRef.current) {
       drumSynthRef.current = createDrumSynth(ctx);

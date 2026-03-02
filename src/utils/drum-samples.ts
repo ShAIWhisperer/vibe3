@@ -157,22 +157,22 @@ export function createDrumSynth(ctx: AudioContext) {
     const g = ctx.createGain();
     const osc = ctx.createOscillator();
     const clickG = ctx.createGain();
-    
+
     osc.type = 'sine';
     osc.frequency.setValueAtTime(pitch * 3, t);
     osc.frequency.exponentialRampToValueAtTime(pitch, t + 0.03);
     osc.frequency.exponentialRampToValueAtTime(30, t + decay);
-    
-    g.gain.setValueAtTime(vol, t);
+
+    g.gain.setValueAtTime(vol * 1.4, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + decay + 0.05);
-    
-    // Click transient
+
+    // Click transient — louder for punch
     const clickOsc = ctx.createOscillator();
     clickOsc.type = 'square';
     clickOsc.frequency.setValueAtTime(200, t);
-    clickG.gain.setValueAtTime(click * vol * 0.4, t);
+    clickG.gain.setValueAtTime(click * vol * 0.7, t);
     clickG.gain.exponentialRampToValueAtTime(0.001, t + 0.025);
-    
+
     if (dist) {
       const wv = ctx.createWaveShaper();
       const curve = new Float32Array(256);
@@ -188,7 +188,7 @@ export function createDrumSynth(ctx: AudioContext) {
       osc.connect(g);
       g.connect(output);
     }
-    
+
     clickOsc.connect(clickG);
     clickG.connect(output);
     osc.start(t);
@@ -199,20 +199,20 @@ export function createDrumSynth(ctx: AudioContext) {
 
   // --- SNARE ---
   function snare(t: number, output: AudioNode, vol = 1, tone = 200, decay = 0.2, noiseDecay = 0.15, noiseAmt = 0.7, doPitch = true) {
-    // Tone part
+    // Tone part — boosted
     const osc = ctx.createOscillator();
     const toneG = ctx.createGain();
     osc.type = 'triangle';
     osc.frequency.setValueAtTime(tone, t);
     if (doPitch) osc.frequency.exponentialRampToValueAtTime(tone * 0.5, t + decay);
-    toneG.gain.setValueAtTime(vol * 0.6, t);
+    toneG.gain.setValueAtTime(vol * 0.9, t);
     toneG.gain.exponentialRampToValueAtTime(0.001, t + decay);
     osc.connect(toneG);
     toneG.connect(output);
     osc.start(t);
     osc.stop(t + decay + 0.05);
 
-    // Noise part
+    // Noise part — boosted for crispness
     const bufLen = Math.floor(ctx.sampleRate * (noiseDecay + 0.1));
     const buf = ctx.createBuffer(1, bufLen, ctx.sampleRate);
     const d = buf.getChannelData(0);
@@ -224,7 +224,7 @@ export function createDrumSynth(ctx: AudioContext) {
     bpf.type = 'bandpass';
     bpf.frequency.value = 3500;
     bpf.Q.value = 0.8;
-    nsG.gain.setValueAtTime(vol * noiseAmt, t);
+    nsG.gain.setValueAtTime(vol * noiseAmt * 1.3, t);
     nsG.gain.exponentialRampToValueAtTime(0.001, t + noiseDecay);
     ns.connect(bpf);
     bpf.connect(nsG);
@@ -247,7 +247,7 @@ export function createDrumSynth(ctx: AudioContext) {
       const hpf = ctx.createBiquadFilter();
       hpf.type = 'highpass';
       hpf.frequency.value = 1200;
-      nsG.gain.setValueAtTime(vol * 0.5 / spread, t + offset);
+      nsG.gain.setValueAtTime(vol * 0.8 / spread, t + offset);
       nsG.gain.exponentialRampToValueAtTime(0.001, t + offset + decay);
       ns.connect(hpf);
       hpf.connect(nsG);
@@ -273,7 +273,7 @@ export function createDrumSynth(ctx: AudioContext) {
     bpf.frequency.value = 10000;
     bpf.Q.value = 0.5;
     const g = ctx.createGain();
-    g.gain.setValueAtTime(vol * 0.5, t);
+    g.gain.setValueAtTime(vol * 0.8, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + decay);
     ns.connect(hpf);
     hpf.connect(bpf);
@@ -295,7 +295,7 @@ export function createDrumSynth(ctx: AudioContext) {
     hpf.type = 'highpass';
     hpf.frequency.value = brightness;
     const g = ctx.createGain();
-    g.gain.setValueAtTime(vol * 0.4, t);
+    g.gain.setValueAtTime(vol * 0.7, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + decay);
     ns.connect(hpf);
     hpf.connect(g);
@@ -315,7 +315,7 @@ export function createDrumSynth(ctx: AudioContext) {
       const hpf = ctx.createBiquadFilter();
       hpf.type = 'highpass';
       hpf.frequency.value = 6000;
-      g.gain.setValueAtTime(vol * 0.06 / (i + 1), t);
+      g.gain.setValueAtTime(vol * 0.1 / (i + 1), t);
       g.gain.exponentialRampToValueAtTime(0.001, t + decay * (0.5 + i * 0.1));
       osc.connect(hpf);
       hpf.connect(g);
@@ -333,7 +333,7 @@ export function createDrumSynth(ctx: AudioContext) {
     osc.frequency.exponentialRampToValueAtTime(pitch, t + 0.05);
     osc.frequency.exponentialRampToValueAtTime(pitch * 0.5, t + decay);
     const g = ctx.createGain();
-    g.gain.setValueAtTime(vol * 0.8, t);
+    g.gain.setValueAtTime(vol * 1.1, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + decay + 0.05);
     osc.connect(g);
     g.connect(output);
@@ -348,7 +348,7 @@ export function createDrumSynth(ctx: AudioContext) {
     osc.frequency.setValueAtTime(1200, t);
     osc.frequency.exponentialRampToValueAtTime(400, t + 0.02);
     const g = ctx.createGain();
-    g.gain.setValueAtTime(vol * 0.7, t);
+    g.gain.setValueAtTime(vol * 1.0, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.06);
     osc.connect(g);
     g.connect(output);
@@ -362,7 +362,7 @@ export function createDrumSynth(ctx: AudioContext) {
     const ns = ctx.createBufferSource();
     ns.buffer = buf;
     const g2 = ctx.createGain();
-    g2.gain.value = vol * 0.5;
+    g2.gain.value = vol * 0.7;
     ns.connect(g2);
     g2.connect(output);
     ns.start(t);
@@ -379,12 +379,12 @@ export function createDrumSynth(ctx: AudioContext) {
     osc2.frequency.value = pitch;
     const g = ctx.createGain();
     const g2 = ctx.createGain();
-    g2.gain.value = 0.05;
+    g2.gain.value = 0.08;
     const lpf = ctx.createBiquadFilter();
     lpf.type = 'lowpass';
     lpf.frequency.value = 200;
-    g.gain.setValueAtTime(vol, t);
-    g.gain.setValueAtTime(vol, t + 0.05);
+    g.gain.setValueAtTime(vol * 1.3, t);
+    g.gain.setValueAtTime(vol * 1.3, t + 0.05);
     g.gain.exponentialRampToValueAtTime(0.001, t + decay);
     osc.connect(g);
     osc2.connect(lpf);
@@ -413,7 +413,7 @@ export function createDrumSynth(ctx: AudioContext) {
     bpf.frequency.value = 8000;
     bpf.Q.value = 1;
     const g = ctx.createGain();
-    g.gain.value = vol * 0.4;
+    g.gain.value = vol * 0.65;
     ns.connect(hpf);
     hpf.connect(bpf);
     bpf.connect(g);
@@ -433,7 +433,7 @@ export function createDrumSynth(ctx: AudioContext) {
     const hpf = ctx.createBiquadFilter();
     hpf.type = 'highpass';
     hpf.frequency.value = 500;
-    g.gain.setValueAtTime(vol * 0.3, t);
+    g.gain.setValueAtTime(vol * 0.5, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + decay);
     osc1.connect(g);
     osc2.connect(g);
