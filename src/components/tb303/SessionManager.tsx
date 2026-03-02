@@ -31,7 +31,7 @@ const MODULE_ICONS: Record<ModuleId, typeof Music> = {
   arp: Zap
 };
 
-const APP_URL = 'https://vibe3.app';
+const APP_URL = 'https://vibe3-app-iota.vercel.app';
 
 export function SessionManager({ isOpen, onClose, onSave, onLoad, drumState, onLoadDrumState }: SessionManagerProps) {
   const { user, requireAuth } = useAuth();

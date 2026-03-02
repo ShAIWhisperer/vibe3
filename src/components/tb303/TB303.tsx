@@ -42,7 +42,7 @@ const VIRAL_HOOKS = [
 
 
 
-const APP_URL = "https://vibe3.app";
+const APP_URL = "https://vibe3-app-iota.vercel.app";
 
 export function TB303({ initialSession, initialDrumData }: TB303Props = {}) {
   const {
