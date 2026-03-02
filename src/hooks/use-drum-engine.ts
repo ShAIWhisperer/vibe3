@@ -49,6 +49,7 @@ export function useDrumEngine() {
   const channelGainsRef = useRef<GainNode[]>([]);
   const channelPansRef = useRef<StereoPannerNode[]>([]);
   const masterGainRef = useRef<GainNode | null>(null);
+  const makeupGainRef = useRef<GainNode | null>(null);
   const outputNodeRef = useRef<GainNode | null>(null);
   
   const [drumState, setDrumState] = useState<DrumState>({
@@ -62,6 +63,50 @@ export function useDrumEngine() {
   
   const compressorRef = useRef<DynamicsCompressorNode | null>(null);
 
+  // Build the drum audio chain: masterGain → compressor → makeupGain → destination
+  const buildDrumChain = useCallback((ctx: AudioContext, destination: AudioNode) => {
+    // Compressor for punch
+    const compressor = ctx.createDynamicsCompressor();
+    compressor.threshold.value = -15;
+    compressor.knee.value = 3;
+    compressor.ratio.value = 6;
+    compressor.attack.value = 0.001;
+    compressor.release.value = 0.12;
+    compressorRef.current = compressor;
+
+    // Makeup gain to compensate for compression (+6dB)
+    const makeupGain = ctx.createGain();
+    makeupGain.gain.value = 2.0;
+    makeupGainRef.current = makeupGain;
+
+    // Master volume control
+    const masterGain = ctx.createGain();
+    masterGain.gain.value = drumState.masterVolume;
+    masterGainRef.current = masterGain;
+
+    // Chain: channels → masterGain → compressor → makeupGain → destination
+    masterGain.connect(compressor);
+    compressor.connect(makeupGain);
+    makeupGain.connect(destination);
+
+    // Create 8 channel gains + panners
+    channelGainsRef.current = [];
+    channelPansRef.current = [];
+    for (let i = 0; i < 8; i++) {
+      const gain = ctx.createGain();
+      const pan = ctx.createStereoPanner();
+      gain.gain.value = drumState.channelMix[i]?.volume ?? 1.0;
+      pan.pan.value = drumState.channelMix[i]?.pan ?? 0;
+      gain.connect(pan);
+      pan.connect(masterGain);
+      channelGainsRef.current.push(gain);
+      channelPansRef.current.push(pan);
+    }
+
+    // Create drum synth
+    drumSynthRef.current = createDrumSynth(ctx);
+  }, [drumState.masterVolume, drumState.channelMix]);
+
   // Initialize audio
   const initAudio = useCallback(async (externalCtx?: AudioContext, externalOutput?: GainNode) => {
     if (audioCtxRef.current && drumSynthRef.current) return;
@@ -69,106 +114,28 @@ export function useDrumEngine() {
     const ctx = externalCtx || new AudioContext();
     audioCtxRef.current = ctx;
 
-    // Create compressor for punchy drums
-    const compressor = ctx.createDynamicsCompressor();
-    compressor.threshold.value = -12;
-    compressor.knee.value = 4;
-    compressor.ratio.value = 4;
-    compressor.attack.value = 0.002;
-    compressor.release.value = 0.15;
-    compressorRef.current = compressor;
-
-    // Create master gain
-    const masterGain = ctx.createGain();
-    masterGain.gain.value = drumState.masterVolume;
-    masterGainRef.current = masterGain;
-
-    // Chain: channels → masterGain → compressor → output
-    masterGain.connect(compressor);
-
-    // Connect to external output or destination
-    if (externalOutput) {
-      compressor.connect(externalOutput);
-      outputNodeRef.current = externalOutput;
-    } else {
-      compressor.connect(ctx.destination);
-    }
-    
-    // Create channel gains and pans
-    channelGainsRef.current = [];
-    channelPansRef.current = [];
-    
-    for (let i = 0; i < 8; i++) {
-      const gain = ctx.createGain();
-      const pan = ctx.createStereoPanner();
-      
-      gain.gain.value = drumState.channelMix[i]?.volume ?? 0.8;
-      pan.pan.value = drumState.channelMix[i]?.pan ?? 0;
-      
-      gain.connect(pan);
-      pan.connect(masterGain);
-      
-      channelGainsRef.current.push(gain);
-      channelPansRef.current.push(pan);
-    }
-    
-    // Create drum synth
-    drumSynthRef.current = createDrumSynth(ctx);
-  }, [drumState.masterVolume, drumState.channelMix]);
+    buildDrumChain(ctx, externalOutput || ctx.destination);
+    if (externalOutput) outputNodeRef.current = externalOutput;
+  }, [buildDrumChain]);
   
   // Connect to external audio context and output
   const connectToMixer = useCallback((ctx: AudioContext, outputNode: GainNode) => {
     audioCtxRef.current = ctx;
     outputNodeRef.current = outputNode;
 
-    // Create compressor if not exists
-    if (!compressorRef.current) {
-      const compressor = ctx.createDynamicsCompressor();
-      compressor.threshold.value = -12;
-      compressor.knee.value = 4;
-      compressor.ratio.value = 4;
-      compressor.attack.value = 0.002;
-      compressor.release.value = 0.15;
-      compressorRef.current = compressor;
+    // Disconnect old chain if exists
+    if (masterGainRef.current) {
+      try { masterGainRef.current.disconnect(); } catch {}
+    }
+    if (compressorRef.current) {
+      try { compressorRef.current.disconnect(); } catch {}
+    }
+    if (makeupGainRef.current) {
+      try { makeupGainRef.current.disconnect(); } catch {}
     }
 
-    // Create master gain if not exists
-    if (!masterGainRef.current) {
-      const masterGain = ctx.createGain();
-      masterGain.gain.value = drumState.masterVolume;
-      masterGain.connect(compressorRef.current);
-      compressorRef.current.connect(outputNode);
-      masterGainRef.current = masterGain;
-    } else {
-      masterGainRef.current.disconnect();
-      compressorRef.current.disconnect();
-      masterGainRef.current.connect(compressorRef.current);
-      compressorRef.current.connect(outputNode);
-    }
-
-    // Recreate channel routing
-    channelGainsRef.current = [];
-    channelPansRef.current = [];
-
-    for (let i = 0; i < 8; i++) {
-      const gain = ctx.createGain();
-      const pan = ctx.createStereoPanner();
-
-      gain.gain.value = drumState.channelMix[i]?.volume ?? 0.8;
-      pan.pan.value = drumState.channelMix[i]?.pan ?? 0;
-
-      gain.connect(pan);
-      pan.connect(masterGainRef.current!);
-
-      channelGainsRef.current.push(gain);
-      channelPansRef.current.push(pan);
-    }
-
-    // Create drum synth
-    if (!drumSynthRef.current) {
-      drumSynthRef.current = createDrumSynth(ctx);
-    }
-  }, [drumState.masterVolume, drumState.channelMix]);
+    buildDrumChain(ctx, outputNode);
+  }, [buildDrumChain]);
   
   // Play a sound immediately (for preview)
   const playSound = useCallback(async (channelIndex: number, velocity: number = 1) => {
@@ -207,49 +174,8 @@ export function useDrumEngine() {
     if (audioCtxRef.current === ctx && drumSynthRef.current) return;
 
     audioCtxRef.current = ctx;
-
-    // Create compressor for punchy drums
-    if (!compressorRef.current) {
-      const compressor = ctx.createDynamicsCompressor();
-      compressor.threshold.value = -12;
-      compressor.knee.value = 4;
-      compressor.ratio.value = 4;
-      compressor.attack.value = 0.002;
-      compressor.release.value = 0.15;
-      compressorRef.current = compressor;
-    }
-
-    // Create master gain for drums — connect to destination directly, not through synth master
-    if (!masterGainRef.current) {
-      const drumMasterGain = ctx.createGain();
-      drumMasterGain.gain.value = drumState.masterVolume;
-      drumMasterGain.connect(compressorRef.current);
-      compressorRef.current.connect(ctx.destination);
-      masterGainRef.current = drumMasterGain;
-    }
-
-    // Create channel routing if not exists
-    if (channelGainsRef.current.length === 0) {
-      for (let i = 0; i < 8; i++) {
-        const gain = ctx.createGain();
-        const pan = ctx.createStereoPanner();
-
-        gain.gain.value = drumState.channelMix[i]?.volume ?? 1.0;
-        pan.pan.value = drumState.channelMix[i]?.pan ?? 0;
-
-        gain.connect(pan);
-        pan.connect(masterGainRef.current!);
-
-        channelGainsRef.current.push(gain);
-        channelPansRef.current.push(pan);
-      }
-    }
-
-    // Create drum synth
-    if (!drumSynthRef.current) {
-      drumSynthRef.current = createDrumSynth(ctx);
-    }
-  }, [drumState.masterVolume, drumState.channelMix]);
+    buildDrumChain(ctx, ctx.destination);
+  }, [buildDrumChain]);
   
   // Schedule sounds for a step (called by main sequencer)
   const scheduleStep = useCallback((stepIndex: number, time: number) => {
