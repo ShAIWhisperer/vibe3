@@ -83,8 +83,16 @@ interface MasterNodes {
   eqLow: BiquadFilterNode;
   eqMid: BiquadFilterNode;
   eqHigh: BiquadFilterNode;
+  filter: BiquadFilterNode;
+  filterBypass: GainNode;
+  filterWet: GainNode;
   compressor: DynamicsCompressorNode;
   compMakeup: GainNode;
+  reverbConvolver: ConvolverNode;
+  reverbPreDelay: DelayNode;
+  reverbWet: GainNode;
+  reverbDry: GainNode;
+  reverbMix: GainNode;
   limiter: DynamicsCompressorNode;
   volume: GainNode;
   analyserL: AnalyserNode;
@@ -454,6 +462,17 @@ export class ProMixerEngine {
     eqHigh.frequency.value = 8000;
     eqHigh.gain.value = 0;
 
+    // Master Filter (bypass by default)
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 20000;
+    filter.Q.value = 0.707;
+
+    const filterBypass = ctx.createGain();
+    filterBypass.gain.value = 1; // bypass active by default
+    const filterWet = ctx.createGain();
+    filterWet.gain.value = 0; // filter disabled by default
+
     // Master compressor (gentler defaults)
     const compressor = ctx.createDynamicsCompressor();
     compressor.threshold.value = -12;
@@ -464,6 +483,20 @@ export class ProMixerEngine {
 
     const compMakeup = ctx.createGain();
     compMakeup.gain.value = 1;
+
+    // Master Reverb (disabled by default)
+    const reverbConvolver = ctx.createConvolver();
+    reverbConvolver.buffer = generateReverbIR(ctx, 0.3, 0.5);
+
+    const reverbPreDelay = ctx.createDelay(0.2);
+    reverbPreDelay.delayTime.value = 0.01;
+
+    const reverbDry = ctx.createGain();
+    reverbDry.gain.value = 1; // fully dry by default
+    const reverbWet = ctx.createGain();
+    reverbWet.gain.value = 0; // no wet by default
+    const reverbMix = ctx.createGain();
+    reverbMix.gain.value = 1;
 
     // Limiter (brick-wall)
     const limiter = ctx.createDynamicsCompressor();
@@ -487,13 +520,29 @@ export class ProMixerEngine {
     analyserR.fftSize = 256;
     analyserR.smoothingTimeConstant = 0.8;
 
-    // Wire: inputSum → EQ → compressor → makeup → limiter → volume → splitter
+    // Wire: inputSum → EQ chain
     inputSum.connect(eqLow);
     eqLow.connect(eqMid);
     eqMid.connect(eqHigh);
-    eqHigh.connect(compressor);
+
+    // EQ → Filter (bypass + wet paths) → Compressor
+    eqHigh.connect(filterBypass);  // bypass path
+    eqHigh.connect(filter);        // filter path
+    filter.connect(filterWet);
+    filterBypass.connect(compressor);
+    filterWet.connect(compressor);
+
+    // Compressor → Makeup → Reverb (dry + wet paths) → Limiter
     compressor.connect(compMakeup);
-    compMakeup.connect(limiter);
+    compMakeup.connect(reverbDry);                    // dry path
+    compMakeup.connect(reverbPreDelay);               // wet path
+    reverbPreDelay.connect(reverbConvolver);
+    reverbConvolver.connect(reverbWet);
+    reverbDry.connect(reverbMix);
+    reverbWet.connect(reverbMix);
+    reverbMix.connect(limiter);
+
+    // Limiter → Volume → Splitter
     limiter.connect(volume);
     volume.connect(splitter);
 
@@ -503,7 +552,13 @@ export class ProMixerEngine {
     analyserL.connect(merger, 0, 0);
     analyserR.connect(merger, 0, 1);
 
-    this.master = { inputSum, eqLow, eqMid, eqHigh, compressor, compMakeup, limiter, volume, analyserL, analyserR, splitter, merger };
+    this.master = {
+      inputSum, eqLow, eqMid, eqHigh,
+      filter, filterBypass, filterWet,
+      compressor, compMakeup,
+      reverbConvolver, reverbPreDelay, reverbWet, reverbDry, reverbMix,
+      limiter, volume, analyserL, analyserR, splitter, merger,
+    };
   }
 
   // ============================================================
@@ -619,6 +674,18 @@ export class ProMixerEngine {
     this.master.eqHigh.frequency.setTargetAtTime(state.eq.high.frequency, now, 0.02);
     this.master.eqHigh.gain.setTargetAtTime(state.eq.high.gain, now, 0.02);
 
+    // Master Filter
+    this.master.filter.type = state.filter.type as BiquadFilterType;
+    this.master.filter.frequency.setTargetAtTime(state.filter.frequency, now, 0.02);
+    this.master.filter.Q.setTargetAtTime(state.filter.Q, now, 0.02);
+    if (state.filter.enabled) {
+      this.master.filterBypass.gain.setTargetAtTime(0, now, 0.02);
+      this.master.filterWet.gain.setTargetAtTime(1, now, 0.02);
+    } else {
+      this.master.filterBypass.gain.setTargetAtTime(1, now, 0.02);
+      this.master.filterWet.gain.setTargetAtTime(0, now, 0.02);
+    }
+
     // Master compressor
     this.master.compressor.threshold.setTargetAtTime(state.compressor.threshold, now, 0.02);
     this.master.compressor.ratio.setTargetAtTime(state.compressor.ratio, now, 0.02);
@@ -626,6 +693,20 @@ export class ProMixerEngine {
     this.master.compressor.release.setTargetAtTime(state.compressor.release, now, 0.02);
     this.master.compressor.knee.setTargetAtTime(state.compressor.knee, now, 0.02);
     this.master.compMakeup.gain.setTargetAtTime(state.compressor.makeup, now, 0.02);
+
+    // Master Reverb
+    if (state.reverb.enabled) {
+      this.master.reverbWet.gain.setTargetAtTime(state.reverb.wetDry, now, 0.02);
+      this.master.reverbDry.gain.setTargetAtTime(1 - state.reverb.wetDry, now, 0.02);
+    } else {
+      this.master.reverbWet.gain.setTargetAtTime(0, now, 0.02);
+      this.master.reverbDry.gain.setTargetAtTime(1, now, 0.02);
+    }
+    generateReverbIRDebounced(this.ctx, state.reverb.roomSize, state.reverb.damping, (buffer) => {
+      if (!this.disposed) {
+        try { this.master.reverbConvolver.buffer = buffer; } catch { /* ignore */ }
+      }
+    });
 
     // Limiter
     this.master.limiter.threshold.setTargetAtTime(state.limiter.threshold, now, 0.02);
@@ -734,7 +815,11 @@ export class ProMixerEngine {
     // Disconnect master
     disconnectAll(
       this.master.inputSum, this.master.eqLow, this.master.eqMid, this.master.eqHigh,
-      this.master.compressor, this.master.compMakeup, this.master.limiter,
+      this.master.filter, this.master.filterBypass, this.master.filterWet,
+      this.master.compressor, this.master.compMakeup,
+      this.master.reverbConvolver, this.master.reverbPreDelay,
+      this.master.reverbWet, this.master.reverbDry, this.master.reverbMix,
+      this.master.limiter,
       this.master.volume, this.master.analyserL, this.master.analyserR,
       this.master.splitter, this.master.merger,
     );

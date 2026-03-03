@@ -139,7 +139,7 @@ export function useProMixer() {
   /** Set a master bus parameter */
   const setMasterParam = useCallback((
     path: string,
-    value: number | boolean
+    value: number | boolean | string
   ) => {
     setProMixerState(prev => {
       const next = { ...prev };

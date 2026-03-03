@@ -16,7 +16,7 @@ interface ProMixerProps {
   drumTrackNames: string[];
   onChannelParam: (channelId: ProMixerChannelId, path: string, value: number | boolean) => void;
   onAuxParam: (effectId: AuxEffectId, path: string, value: number | boolean | string) => void;
-  onMasterParam: (path: string, value: number | boolean) => void;
+  onMasterParam: (path: string, value: number | boolean | string) => void;
   onReset: () => void;
   onPreset: (presetId: string) => void;
   onSwitchToBasic: () => void;

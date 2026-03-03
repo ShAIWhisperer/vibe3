@@ -91,10 +91,28 @@ export interface LimiterState {
   release: number; // seconds
 }
 
+export type MasterFilterType = 'lowpass' | 'highpass' | 'bandpass' | 'notch';
+
+export interface MasterFilterState {
+  type: MasterFilterType;
+  frequency: number;  // 20-20000 Hz
+  Q: number;          // 0.1-30 (resonance)
+  enabled: boolean;   // bypass when false
+}
+
+export interface MasterReverbState {
+  roomSize: number;   // 0-1
+  damping: number;    // 0-1
+  wetDry: number;     // 0-1
+  enabled: boolean;   // bypass when false
+}
+
 export interface MasterBusState {
   eq: EQState;
+  filter: MasterFilterState;
   compressor: CompressorState;
   limiter: LimiterState;
+  reverb: MasterReverbState;
   volume: number; // 0-1
 }
 
@@ -203,8 +221,23 @@ export const DEFAULT_LIMITER: LimiterState = {
   release: 0.1,
 };
 
+export const DEFAULT_MASTER_FILTER: MasterFilterState = {
+  type: 'lowpass',
+  frequency: 20000,  // wide open by default
+  Q: 0.707,          // Butterworth (flat response)
+  enabled: false,
+};
+
+export const DEFAULT_MASTER_REVERB: MasterReverbState = {
+  roomSize: 0.3,
+  damping: 0.5,
+  wetDry: 0,  // fully dry by default
+  enabled: false,
+};
+
 export const DEFAULT_MASTER_BUS: MasterBusState = {
   eq: { ...DEFAULT_EQ_STATE },
+  filter: { ...DEFAULT_MASTER_FILTER },
   compressor: {
     threshold: -12,
     ratio: 2,
@@ -214,6 +247,7 @@ export const DEFAULT_MASTER_BUS: MasterBusState = {
     makeup: 1,
   },
   limiter: { ...DEFAULT_LIMITER },
+  reverb: { ...DEFAULT_MASTER_REVERB },
   volume: 0.85,
 };
 
@@ -256,6 +290,8 @@ export const MIXER_PRESETS: MixerPreset[] = [
           mid: { frequency: 800, gain: -1, Q: 1 },
           high: { frequency: 8000, gain: -2, Q: 0.7 },
         },
+        filter: { ...DEFAULT_MASTER_FILTER },
+        reverb: { ...DEFAULT_MASTER_REVERB },
       },
     },
   },
@@ -271,6 +307,7 @@ export const MIXER_PRESETS: MixerPreset[] = [
           mid: { frequency: 2500, gain: 2, Q: 1 },
           high: { frequency: 10000, gain: 3, Q: 0.7 },
         },
+        filter: { ...DEFAULT_MASTER_FILTER },
         compressor: {
           threshold: -18,
           ratio: 3,
@@ -279,6 +316,7 @@ export const MIXER_PRESETS: MixerPreset[] = [
           knee: 4,
           makeup: 1.2,
         },
+        reverb: { ...DEFAULT_MASTER_REVERB },
       },
     },
   },
