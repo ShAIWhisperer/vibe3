@@ -107,12 +107,21 @@ export interface MasterReverbState {
   enabled: boolean;   // bypass when false
 }
 
+export interface MasterFlangerState {
+  rate: number;       // 0.05-5 Hz (LFO speed)
+  depth: number;      // 0-1
+  feedback: number;   // -0.95 to 0.95
+  wetDry: number;     // 0-1
+  enabled: boolean;   // bypass when false
+}
+
 export interface MasterBusState {
   eq: EQState;
   filter: MasterFilterState;
   compressor: CompressorState;
   limiter: LimiterState;
   reverb: MasterReverbState;
+  flanger: MasterFlangerState;
   volume: number; // 0-1
 }
 
@@ -235,6 +244,14 @@ export const DEFAULT_MASTER_REVERB: MasterReverbState = {
   enabled: false,
 };
 
+export const DEFAULT_MASTER_FLANGER: MasterFlangerState = {
+  rate: 0.5,
+  depth: 0.5,
+  feedback: 0.3,
+  wetDry: 0,  // fully dry by default
+  enabled: false,
+};
+
 export const DEFAULT_MASTER_BUS: MasterBusState = {
   eq: { ...DEFAULT_EQ_STATE },
   filter: { ...DEFAULT_MASTER_FILTER },
@@ -248,6 +265,7 @@ export const DEFAULT_MASTER_BUS: MasterBusState = {
   },
   limiter: { ...DEFAULT_LIMITER },
   reverb: { ...DEFAULT_MASTER_REVERB },
+  flanger: { ...DEFAULT_MASTER_FLANGER },
   volume: 0.85,
 };
 
@@ -292,6 +310,7 @@ export const MIXER_PRESETS: MixerPreset[] = [
         },
         filter: { ...DEFAULT_MASTER_FILTER },
         reverb: { ...DEFAULT_MASTER_REVERB },
+        flanger: { ...DEFAULT_MASTER_FLANGER },
       },
     },
   },
@@ -317,6 +336,7 @@ export const MIXER_PRESETS: MixerPreset[] = [
           makeup: 1.2,
         },
         reverb: { ...DEFAULT_MASTER_REVERB },
+        flanger: { ...DEFAULT_MASTER_FLANGER },
       },
     },
   },

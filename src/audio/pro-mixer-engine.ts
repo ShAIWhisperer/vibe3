@@ -93,6 +93,12 @@ interface MasterNodes {
   reverbWet: GainNode;
   reverbDry: GainNode;
   reverbMix: GainNode;
+  flangerDelay: DelayNode;
+  flangerLfo: OscillatorNode;
+  flangerLfoGain: GainNode;
+  flangerFeedback: GainNode;
+  flangerBypass: GainNode;
+  flangerWet: GainNode;
   limiter: DynamicsCompressorNode;
   volume: GainNode;
   analyserL: AnalyserNode;
@@ -498,6 +504,25 @@ export class ProMixerEngine {
     const reverbMix = ctx.createGain();
     reverbMix.gain.value = 1;
 
+    // Master Flanger (disabled by default)
+    const flangerDelay = ctx.createDelay(0.02); // max 20ms
+    flangerDelay.delayTime.value = 0.005; // 5ms center
+
+    const flangerLfo = ctx.createOscillator();
+    flangerLfo.type = 'sine';
+    flangerLfo.frequency.value = 0.5;
+
+    const flangerLfoGain = ctx.createGain();
+    flangerLfoGain.gain.value = 0.002; // depth in seconds
+
+    const flangerFeedback = ctx.createGain();
+    flangerFeedback.gain.value = 0.3;
+
+    const flangerBypass = ctx.createGain();
+    flangerBypass.gain.value = 1; // bypass active by default
+    const flangerWet = ctx.createGain();
+    flangerWet.gain.value = 0; // flanger disabled by default
+
     // Limiter (brick-wall)
     const limiter = ctx.createDynamicsCompressor();
     limiter.threshold.value = -1;
@@ -540,7 +565,19 @@ export class ProMixerEngine {
     reverbConvolver.connect(reverbWet);
     reverbDry.connect(reverbMix);
     reverbWet.connect(reverbMix);
-    reverbMix.connect(limiter);
+
+    // Reverb Mix → Flanger (bypass + wet paths) → Limiter
+    reverbMix.connect(flangerBypass);   // bypass path
+    reverbMix.connect(flangerDelay);    // flanger wet path
+    flangerDelay.connect(flangerWet);
+    flangerDelay.connect(flangerFeedback); // feedback loop
+    flangerFeedback.connect(flangerDelay);
+    flangerLfo.connect(flangerLfoGain);
+    flangerLfoGain.connect(flangerDelay.delayTime);
+    flangerBypass.connect(limiter);
+    flangerWet.connect(limiter);
+
+    flangerLfo.start();
 
     // Limiter → Volume → Splitter
     limiter.connect(volume);
@@ -557,6 +594,7 @@ export class ProMixerEngine {
       filter, filterBypass, filterWet,
       compressor, compMakeup,
       reverbConvolver, reverbPreDelay, reverbWet, reverbDry, reverbMix,
+      flangerDelay, flangerLfo, flangerLfoGain, flangerFeedback, flangerBypass, flangerWet,
       limiter, volume, analyserL, analyserR, splitter, merger,
     };
   }
@@ -708,6 +746,19 @@ export class ProMixerEngine {
       }
     });
 
+    // Master Flanger
+    this.master.flangerLfo.frequency.setTargetAtTime(state.flanger.rate, now, 0.02);
+    const flangerDepth = state.flanger.depth * 0.004; // 0-4ms sweep
+    this.master.flangerLfoGain.gain.setTargetAtTime(flangerDepth, now, 0.02);
+    this.master.flangerFeedback.gain.setTargetAtTime(state.flanger.feedback, now, 0.02);
+    if (state.flanger.enabled) {
+      this.master.flangerBypass.gain.setTargetAtTime(1 - state.flanger.wetDry, now, 0.02);
+      this.master.flangerWet.gain.setTargetAtTime(state.flanger.wetDry, now, 0.02);
+    } else {
+      this.master.flangerBypass.gain.setTargetAtTime(1, now, 0.02);
+      this.master.flangerWet.gain.setTargetAtTime(0, now, 0.02);
+    }
+
     // Limiter
     this.master.limiter.threshold.setTargetAtTime(state.limiter.threshold, now, 0.02);
     this.master.limiter.release.setTargetAtTime(state.limiter.release, now, 0.02);
@@ -766,6 +817,7 @@ export class ProMixerEngine {
     // Stop oscillators
     try { this.chorusBus.lfo.stop(); } catch { /* ignore */ }
     try { this.flangerBus.lfo.stop(); } catch { /* ignore */ }
+    try { this.master.flangerLfo.stop(); } catch { /* ignore */ }
 
     // Disconnect everything
     this.channels.forEach(ch => {
@@ -819,6 +871,8 @@ export class ProMixerEngine {
       this.master.compressor, this.master.compMakeup,
       this.master.reverbConvolver, this.master.reverbPreDelay,
       this.master.reverbWet, this.master.reverbDry, this.master.reverbMix,
+      this.master.flangerDelay, this.master.flangerLfo, this.master.flangerLfoGain,
+      this.master.flangerFeedback, this.master.flangerBypass, this.master.flangerWet,
       this.master.limiter,
       this.master.volume, this.master.analyserL, this.master.analyserR,
       this.master.splitter, this.master.merger,

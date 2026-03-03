@@ -25,6 +25,7 @@ export const ProMasterStrip = React.memo(function ProMasterStrip({
   const [expanded, setExpanded] = useState(false);
   const [filterExpanded, setFilterExpanded] = useState(false);
   const [reverbExpanded, setReverbExpanded] = useState(false);
+  const [flangerExpanded, setFlangerExpanded] = useState(false);
 
   return (
     <div
@@ -146,6 +147,42 @@ export const ProMasterStrip = React.memo(function ProMasterStrip({
           {/* Mix knob */}
           <div className="flex gap-1 justify-center">
             <Knob value={state.reverb.wetDry} onChange={(v) => onMasterParam('reverb.wetDry', v)} label="Mix" min={0} max={1} size={22} color="#a855f7" />
+          </div>
+        </div>
+      )}
+
+      {/* Flanger Section */}
+      <button
+        onClick={() => setFlangerExpanded(!flangerExpanded)}
+        className="flex items-center justify-center gap-0.5 w-full py-0.5 text-[7px] text-zinc-600 hover:text-zinc-400 transition-colors border-b border-zinc-700/30"
+      >
+        {flangerExpanded ? <ChevronDown size={8} /> : <ChevronRight size={8} />}
+        <span className={state.flanger.enabled ? 'text-emerald-400' : ''}>FLANGER</span>
+      </button>
+
+      {flangerExpanded && (
+        <div className="flex flex-col items-center gap-1.5 py-2 w-full px-1 border-b border-zinc-700/30">
+          {/* Enable toggle */}
+          <button
+            onClick={() => onMasterParam('flanger.enabled', !state.flanger.enabled)}
+            className={`px-2 py-0.5 text-[7px] font-bold rounded-sm border transition-colors ${
+              state.flanger.enabled
+                ? 'bg-emerald-600/40 border-emerald-500/60 text-emerald-300'
+                : 'bg-zinc-800 border-zinc-700/50 text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            {state.flanger.enabled ? 'ON' : 'OFF'}
+          </button>
+
+          {/* Rate + Depth knobs */}
+          <div className="flex gap-1 justify-center">
+            <Knob value={state.flanger.rate} onChange={(v) => onMasterParam('flanger.rate', v)} label="Rate" min={0.05} max={5} size={22} color="#34d399" />
+            <Knob value={state.flanger.depth} onChange={(v) => onMasterParam('flanger.depth', v)} label="Dpth" min={0} max={1} size={22} color="#34d399" />
+          </div>
+          {/* Feedback + Mix knobs */}
+          <div className="flex gap-1 justify-center">
+            <Knob value={state.flanger.feedback} onChange={(v) => onMasterParam('flanger.feedback', v)} label="Fdbk" min={-0.95} max={0.95} size={22} color="#34d399" />
+            <Knob value={state.flanger.wetDry} onChange={(v) => onMasterParam('flanger.wetDry', v)} label="Mix" min={0} max={1} size={22} color="#34d399" />
           </div>
         </div>
       )}
