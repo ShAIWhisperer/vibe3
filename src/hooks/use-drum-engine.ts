@@ -1,6 +1,8 @@
 import { useRef, useCallback, useState } from 'react';
 import { createDrumSynth, GENRE_KITS, type GenreKit } from '@/utils/drum-samples';
 import { getPatternForKit } from '@/utils/drum-patterns';
+import type { ProMixerEngine } from '@/audio/pro-mixer-engine';
+import type { ProMixerChannelId } from '@/audio/pro-mixer-types';
 
 // Drum step - which sounds are active at each step
 export interface DrumStep {
@@ -74,9 +76,9 @@ export function useDrumEngine() {
     compressor.release.value = 0.12;
     compressorRef.current = compressor;
 
-    // Makeup gain to compensate for compression (+6dB)
+    // Makeup gain to compensate for compression (reduced from 2.0 to 1.3 to prevent distortion)
     const makeupGain = ctx.createGain();
-    makeupGain.gain.value = 2.0;
+    makeupGain.gain.value = 1.3;
     makeupGainRef.current = makeupGain;
 
     // Master volume control
@@ -323,9 +325,52 @@ export function useDrumEngine() {
     });
   }, []);
   
+  // Connect drum channels to ProMixer (bypasses internal compressor/makeup chain)
+  const connectToProMixer = useCallback((engine: ProMixerEngine) => {
+    const ctx = audioCtxRef.current;
+    if (!ctx) return;
+
+    // Ensure we have channel gains/pans
+    if (channelGainsRef.current.length === 0) {
+      // Need to create channel gains first if they don't exist
+      channelGainsRef.current = [];
+      channelPansRef.current = [];
+      for (let i = 0; i < 8; i++) {
+        const gain = ctx.createGain();
+        const pan = ctx.createStereoPanner();
+        gain.gain.value = drumState.channelMix[i]?.volume ?? 1.0;
+        pan.pan.value = drumState.channelMix[i]?.pan ?? 0;
+        gain.connect(pan);
+        channelGainsRef.current.push(gain);
+        channelPansRef.current.push(pan);
+      }
+      drumSynthRef.current = createDrumSynth(ctx);
+    }
+
+    // Disconnect panners from old destinations and connect to ProMixer channel inputs
+    for (let i = 0; i < 8; i++) {
+      const panner = channelPansRef.current[i];
+      if (!panner) continue;
+      try { panner.disconnect(); } catch { /* ignore */ }
+      const channelId = `drum${i}` as ProMixerChannelId;
+      panner.connect(engine.getChannelInput(channelId));
+    }
+  }, [drumState.channelMix]);
+
+  // Reconnect drum channels back to internal legacy chain
+  const reconnectToLegacy = useCallback(() => {
+    if (!masterGainRef.current) return;
+    for (let i = 0; i < 8; i++) {
+      const panner = channelPansRef.current[i];
+      if (!panner) continue;
+      try { panner.disconnect(); } catch { /* ignore */ }
+      panner.connect(masterGainRef.current);
+    }
+  }, []);
+
   // Get current kit info
   const currentKit = GENRE_KITS.find(k => k.id === drumState.kitId) || GENRE_KITS[0];
-  
+
   return {
     // State
     drumState,
@@ -349,7 +394,11 @@ export function useDrumEngine() {
     setPattern,
     clearPattern,
     loadState,
-    
+
+    // Pro Mixer integration
+    connectToProMixer,
+    reconnectToLegacy,
+
     // Constants
     GENRE_KITS
   };

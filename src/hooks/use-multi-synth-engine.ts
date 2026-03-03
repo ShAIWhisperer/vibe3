@@ -1,7 +1,7 @@
 import { useRef, useCallback, useEffect, useState } from 'react';
-import { 
-  type TB303Params, 
-  type Step, 
+import {
+  type TB303Params,
+  type Step,
   type ModulatorState,
   type AutomationState,
   type AutomationParam,
@@ -12,6 +12,7 @@ import {
   noteToFreq,
   SESSION_VERSION
 } from './use-tb303-engine';
+import type { ProMixerState } from '@/audio/pro-mixer-types';
 
 // Module types
 export type ModuleId = 'bass' | 'lead' | 'arp';
@@ -113,9 +114,10 @@ export interface MultiModuleSessionData {
   automationEnabled: boolean;
   modules: Record<ModuleId, ModuleState>;
   mixer: MixerState;
+  proMixer?: ProMixerState;
 }
 
-export const MULTI_SESSION_VERSION = 2;
+export const MULTI_SESSION_VERSION = 3;
 
 // Default params
 const DEFAULT_PARAMS: TB303Params = {
@@ -465,6 +467,12 @@ class SynthVoice {
     this.vcaEnv *= 0.992;
   }
   
+  /** Reconnect channelGain to a new destination (for ProMixer integration) */
+  reconnect(destination: AudioNode): void {
+    this.channelGain.disconnect();
+    this.channelGain.connect(destination);
+  }
+
   disconnect(): void {
     this.osc?.stop();
     this.osc?.disconnect();
@@ -1132,7 +1140,20 @@ export function useMultiSynthEngine() {
     setDrumScheduler,
     getAudioContext: () => audioCtxRef.current,
     getMasterGain: () => masterGainRef.current,
-    
+
+    // Pro Mixer integration
+    reconnectVoice: (id: ModuleId, destination: AudioNode) => {
+      voicesRef.current[id]?.reconnect(destination);
+    },
+    reconnectAllToMaster: () => {
+      const masterGain = masterGainRef.current;
+      if (!masterGain) return;
+      const modules: ModuleId[] = ['bass', 'lead', 'arp'];
+      for (const id of modules) {
+        voicesRef.current[id]?.reconnect(masterGain);
+      }
+    },
+
     // Constants
     NOTES,
     MODULE_CONFIGS

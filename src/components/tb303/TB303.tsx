@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useMultiSynthEngine, type ModuleId, MODULE_CONFIGS } from '@/hooks/use-multi-synth-engine';
 import { type Step, type AutomationParam, AUTOMATION_PARAMS } from '@/hooks/use-tb303-engine';
 import { useAudioExport } from '@/hooks/use-audio-export';
@@ -14,7 +14,11 @@ import { SessionManager } from './SessionManager';
 import { ExportDialog } from './ExportDialog';
 import { EmotionToMusic } from './EmotionToMusic';
 import { Mixer } from './Mixer';
+import { ProMixer } from './ProMixer';
 import { ModuleTabs } from './ModuleTabs';
+import { useProMixer } from '@/hooks/use-pro-mixer';
+import type { ProMixerChannelId } from '@/audio/pro-mixer-types';
+import { SYNTH_CHANNEL_IDS } from '@/audio/pro-mixer-types';
 import { DrumMachine } from './DrumMachine';
 import { LearnMode, LearnModeButton } from './LearnMode';
 import { CLASSIC_PATTERNS } from './patterns';
@@ -96,6 +100,10 @@ export function TB303({ initialSession, initialDrumData }: TB303Props = {}) {
     getAudioContext,
     getMasterGain,
 
+    // Pro Mixer integration
+    reconnectVoice,
+    reconnectAllToMaster,
+
     // Constants
     NOTES,
     MODULE_CONFIGS: configs
@@ -119,6 +127,9 @@ export function TB303({ initialSession, initialDrumData }: TB303Props = {}) {
   const [drumMute, setDrumMute] = useState(false);
   const [showLearnMode, setShowLearnMode] = useState(false);
   const [highlightedParam, setHighlightedParam] = useState<string | null>(null);
+  const [mixerMode, setMixerMode] = useState<'basic' | 'pro'>('basic');
+  const proMixer = useProMixer();
+  const proMixerInitializedRef = useRef(false);
 
   // Connect drum engine to audio context when playing
   useEffect(() => {
@@ -142,6 +153,32 @@ export function TB303({ initialSession, initialDrumData }: TB303Props = {}) {
     }
   }, [drumMute, drumEngine.drumState.enabled, drumEngine.scheduleStep, setDrumScheduler]);
 
+  // Pro Mixer: connect/disconnect when mode changes
+  useEffect(() => {
+    if (mixerMode === 'pro') {
+      const ctx = getAudioContext();
+      if (!ctx) return;
+
+      // Initialize pro mixer engine
+      proMixer.initMixer(ctx);
+      proMixerInitializedRef.current = true;
+
+      // Reconnect synth voices to ProMixer inputs
+      const engine = proMixer.getEngine();
+      if (engine) {
+        for (const id of SYNTH_CHANNEL_IDS) {
+          reconnectVoice(id as ModuleId, engine.getChannelInput(id));
+        }
+        // Reconnect drum channels
+        drumEngine.connectToProMixer(engine);
+      }
+    } else if (proMixerInitializedRef.current) {
+      // Reconnect back to legacy chain
+      reconnectAllToMaster();
+      drumEngine.reconnectToLegacy();
+    }
+  }, [mixerMode]);
+
   // Check if a parameter has automation
   const hasAutomation = (param: AutomationParam): boolean => {
     return automation[param].points.some((p) => p >= 0);
@@ -158,6 +195,11 @@ export function TB303({ initialSession, initialDrumData }: TB303Props = {}) {
         drumEngine.setSwing(initialDrumData.swing);
         drumEngine.setMasterVolume(initialDrumData.masterVolume);
         drumEngine.setEnabled(initialDrumData.enabled);
+      }
+      // Restore pro mixer state if present
+      if (initialSession.proMixer) {
+        proMixer.loadState(initialSession.proMixer);
+        setMixerMode('pro');
       }
       return;
     }
@@ -641,26 +683,61 @@ export function TB303({ initialSession, initialDrumData }: TB303Props = {}) {
           <div className="mb-4">
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs font-bold text-zinc-400">MIXER</span>
-              <button
-              onClick={() => setShowMixer(!showMixer)}
-              className="text-[10px] text-zinc-500 hover:text-zinc-300">
-
-                {showMixer ? 'Hide' : 'Show'}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    if (mixerMode === 'basic') {
+                      // Need audio context to init pro mixer
+                      const ctx = getAudioContext();
+                      if (!ctx) {
+                        // Audio not yet started - start first
+                        start().then(() => setMixerMode('pro'));
+                        return;
+                      }
+                      setMixerMode('pro');
+                    }
+                  }}
+                  className={`text-[10px] font-bold px-2 py-0.5 rounded transition-all ${
+                    mixerMode === 'pro'
+                      ? 'bg-orange-500/20 text-orange-400 border border-orange-500/50'
+                      : 'text-zinc-500 hover:text-zinc-300'
+                  }`}
+                >
+                  {mixerMode === 'basic' ? 'Pro Mixer' : 'PRO'}
+                </button>
+                <button
+                  onClick={() => setShowMixer(!showMixer)}
+                  className="text-[10px] text-zinc-500 hover:text-zinc-300"
+                >
+                  {showMixer ? 'Hide' : 'Show'}
+                </button>
+              </div>
             </div>
-            {showMixer &&
-            <Mixer
-              mixer={mixer}
-              onChannelChange={setMixerChannel}
-              onMasterChange={setMasterVolume}
-              isPlaying={isPlaying}
-              drumVolume={drumEngine.drumState.masterVolume}
-              drumMute={drumMute}
-              onDrumVolumeChange={(vol) => drumEngine.setMasterVolume(vol)}
-              onDrumMuteToggle={() => setDrumMute(!drumMute)} />
-
-
-            }
+            {showMixer && mixerMode === 'basic' && (
+              <Mixer
+                mixer={mixer}
+                onChannelChange={setMixerChannel}
+                onMasterChange={setMasterVolume}
+                isPlaying={isPlaying}
+                drumVolume={drumEngine.drumState.masterVolume}
+                drumMute={drumMute}
+                onDrumVolumeChange={(vol) => drumEngine.setMasterVolume(vol)}
+                onDrumMuteToggle={() => setDrumMute(!drumMute)}
+              />
+            )}
+            {showMixer && mixerMode === 'pro' && (
+              <ProMixer
+                state={proMixer.proMixerState}
+                levels={proMixer.levels}
+                drumTrackNames={drumEngine.currentKit.tracks.map(t => t.name)}
+                onChannelParam={(channelId, path, value) => proMixer.setChannelParam(channelId, path, value)}
+                onAuxParam={(effectId, path, value) => proMixer.setAuxParam(effectId, path, value)}
+                onMasterParam={(path, value) => proMixer.setMasterParam(path, value)}
+                onReset={proMixer.resetToDefaults}
+                onPreset={proMixer.applyPreset}
+                onSwitchToBasic={() => setMixerMode('basic')}
+              />
+            )}
           </div>
           
           {/* Drum Machine */}
@@ -936,8 +1013,22 @@ export function TB303({ initialSession, initialDrumData }: TB303Props = {}) {
       <SessionManager
         isOpen={showSessionManager}
         onClose={() => setShowSessionManager(false)}
-        onSave={saveSession}
-        onLoad={loadSession}
+        onSave={(name: string) => {
+          const session = saveSession(name);
+          // Include pro mixer state if active
+          if (mixerMode === 'pro') {
+            session.proMixer = proMixer.saveState();
+          }
+          return session;
+        }}
+        onLoad={(session) => {
+          loadSession(session);
+          // Restore pro mixer state if present
+          if (session.proMixer) {
+            proMixer.loadState(session.proMixer);
+            setMixerMode('pro');
+          }
+        }}
         drumState={drumEngine.drumState}
         onLoadDrumState={(ds) => {
           drumEngine.setKit(ds.kitId);
