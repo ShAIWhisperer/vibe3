@@ -110,6 +110,13 @@ export function Knob({
     }
   };
 
+  // Scale body inset and indicator proportionally to knob size
+  const bodyInset = Math.max(2, Math.round(size * 0.12));
+  const bodySize = size - bodyInset * 2;
+  const indicatorTop = Math.max(1, Math.round(bodySize * 0.08));
+  const indicatorHeight = Math.max(3, Math.round(bodySize * 0.3));
+  const indicatorWidth = Math.max(2, Math.round(bodySize * 0.08));
+
   return (
     <div className="flex flex-col items-center gap-1">
       <div
@@ -152,11 +159,15 @@ export function Knob({
           style={{ filter: `drop-shadow(0 0 4px ${color})` }} />
 
         </svg>
-        
+
         {/* Knob body */}
         <div
-        className="absolute inset-2 rounded-full"
+        className="absolute rounded-full"
         style={{
+          top: bodyInset,
+          left: bodyInset,
+          right: bodyInset,
+          bottom: bodyInset,
           background: 'linear-gradient(145deg, #3a3a3a, #1a1a1a)',
           boxShadow: `
               inset 2px 2px 4px rgba(255,255,255,0.1),
@@ -169,8 +180,11 @@ export function Knob({
 
           {/* Indicator line */}
           <div
-          className="absolute top-1.5 left-1/2 w-1 h-2.5 rounded-full -translate-x-1/2"
+          className="absolute left-1/2 rounded-full -translate-x-1/2"
           style={{
+            top: indicatorTop,
+            width: indicatorWidth,
+            height: indicatorHeight,
             backgroundColor: color,
             boxShadow: `0 0 6px ${color}`
           }} />

@@ -128,7 +128,7 @@ export const ProChannelStrip = React.memo(function ProChannelStrip({
 
   return (
     <div
-      className="flex flex-col items-center w-[68px] flex-shrink-0 rounded-lg border border-zinc-700/40 overflow-hidden"
+      className="flex flex-col items-center w-[76px] flex-shrink-0 rounded-lg border border-zinc-700/40 overflow-hidden"
       style={{ background: 'linear-gradient(180deg, #232323, #1a1a1a)' }}
     >
       {/* Channel label */}
@@ -242,8 +242,8 @@ function MiniKnob({
 }) {
   return (
     <div className="flex flex-col items-center">
-      <Knob value={value} onChange={onChange} label="" min={min} max={max} size={20} color={color} />
-      <span className="text-[6px] text-zinc-500 leading-none mt-0.5">{label}</span>
+      <Knob value={value} onChange={onChange} label="" min={min} max={max} size={26} color={color} />
+      <span className="text-[7px] text-zinc-500 leading-none mt-0.5">{label}</span>
     </div>
   );
 }
