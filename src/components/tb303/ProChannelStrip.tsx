@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { VolumeX, Headphones, ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { Knob } from './Knob';
 import { LevelMeter } from './LevelMeter';
 import type { ProMixerChannelId, ChannelStripState } from '@/audio/pro-mixer-types';
@@ -13,7 +13,7 @@ interface ProChannelStripProps {
   onParamChange: (path: string, value: number | boolean) => void;
 }
 
-/** Vertical fader component styled like a real console */
+/** Vertical fader styled like a real console */
 function Fader({
   value,
   onChange,
@@ -27,9 +27,9 @@ function Fader({
 }) {
   return (
     <div className="relative flex flex-col items-center" style={{ height: 100 }}>
-      {/* dB markings */}
+      {/* dB tick marks */}
       <div className="absolute left-0 top-0 bottom-0 w-2 flex flex-col justify-between py-1">
-        {[0, -6, -12, -24, -48].map((db, i) => (
+        {[0, -6, -12, -24, -48].map((db) => (
           <div key={db} className="flex items-center">
             <div className="w-1.5 h-px bg-zinc-600" />
           </div>
@@ -37,18 +37,15 @@ function Fader({
       </div>
       {/* Track groove */}
       <div className="relative w-2 flex-1 mx-3 rounded-full overflow-hidden" style={{ backgroundColor: '#111' }}>
-        {/* Fill */}
         <div
           className="absolute bottom-0 left-0 right-0 rounded-full transition-[height] duration-75"
           style={{
             height: `${value * 100}%`,
-            background: disabled
-              ? '#444'
-              : `linear-gradient(to top, ${color}88, ${color})`,
+            background: disabled ? '#444' : `linear-gradient(to top, ${color}88, ${color})`,
           }}
         />
       </div>
-      {/* Slider input (invisible, overlaid) */}
+      {/* Invisible range input */}
       <input
         type="range"
         min={0}
@@ -57,12 +54,9 @@ function Fader({
         value={value}
         onChange={(e) => onChange(parseFloat(e.target.value))}
         className="absolute inset-0 w-full opacity-0 cursor-pointer"
-        style={{
-          writingMode: 'vertical-lr',
-          direction: 'rtl',
-        }}
+        style={{ writingMode: 'vertical-lr', direction: 'rtl' }}
       />
-      {/* Thumb indicator */}
+      {/* Fader thumb */}
       <div
         className="absolute left-1/2 -translate-x-1/2 w-6 h-2.5 rounded-sm pointer-events-none"
         style={{
@@ -78,6 +72,50 @@ function Fader({
   );
 }
 
+/** Horizontal pan slider — L/R matches visual direction */
+function PanSlider({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+}) {
+  const pct = ((value + 1) / 2) * 100; // -1..1 → 0..100
+  return (
+    <div className="w-full px-1">
+      <div className="flex items-center gap-1">
+        <span className="text-[7px] text-zinc-600 select-none">L</span>
+        <div className="relative flex-1 h-3 flex items-center">
+          {/* Track */}
+          <div className="w-full h-[3px] rounded-full bg-zinc-700 relative">
+            {/* Center notch */}
+            <div className="absolute left-1/2 -translate-x-px top-[-1px] w-[2px] h-[5px] bg-zinc-500 rounded-full" />
+            {/* Fill from center */}
+            <div
+              className="absolute top-0 h-full rounded-full bg-zinc-400"
+              style={{
+                left: value < 0 ? `${pct}%` : '50%',
+                width: `${Math.abs(value) * 50}%`,
+              }}
+            />
+          </div>
+          {/* Input */}
+          <input
+            type="range"
+            min={-1}
+            max={1}
+            step={0.05}
+            value={value}
+            onChange={(e) => onChange(parseFloat(e.target.value))}
+            className="absolute inset-0 w-full opacity-0 cursor-pointer"
+          />
+        </div>
+        <span className="text-[7px] text-zinc-600 select-none">R</span>
+      </div>
+    </div>
+  );
+}
+
 export const ProChannelStrip = React.memo(function ProChannelStrip({
   channelId,
   label,
@@ -86,10 +124,11 @@ export const ProChannelStrip = React.memo(function ProChannelStrip({
   level,
   onParamChange,
 }: ProChannelStripProps) {
-  const [expanded, setExpanded] = useState(false);
+  const [showComp, setShowComp] = useState(false);
 
   return (
-    <div className="flex flex-col items-center w-[62px] flex-shrink-0 bg-zinc-850 rounded-lg border border-zinc-700/40 overflow-hidden"
+    <div
+      className="flex flex-col items-center w-[68px] flex-shrink-0 rounded-lg border border-zinc-700/40 overflow-hidden"
       style={{ background: 'linear-gradient(180deg, #232323, #1a1a1a)' }}
     >
       {/* Channel label */}
@@ -100,7 +139,7 @@ export const ProChannelStrip = React.memo(function ProChannelStrip({
         {label}
       </div>
 
-      {/* Mute / Solo buttons */}
+      {/* Mute / Solo */}
       <div className="flex gap-1 py-1.5">
         <button
           onClick={() => onParamChange('mute', !state.mute)}
@@ -124,57 +163,50 @@ export const ProChannelStrip = React.memo(function ProChannelStrip({
         </button>
       </div>
 
-      {/* Pan knob (small) */}
-      <div className="py-1">
-        <Knob
-          value={state.pan}
-          onChange={(v) => onParamChange('pan', v)}
-          label="PAN"
-          min={-1}
-          max={1}
-          size={26}
-          color="#888"
-        />
+      {/* ── EQ (always visible) ── */}
+      <div className="w-full px-1 py-1 border-t border-zinc-700/30">
+        <div className="text-[7px] text-zinc-500 font-bold text-center mb-0.5">EQ</div>
+        <div className="flex justify-center gap-[2px]">
+          <MiniKnob value={state.eq.low.gain} onChange={(v) => onParamChange('eq.low.gain', v)} label="Lo" min={-12} max={12} color={color} />
+          <MiniKnob value={state.eq.mid.gain} onChange={(v) => onParamChange('eq.mid.gain', v)} label="Mid" min={-12} max={12} color={color} />
+          <MiniKnob value={state.eq.high.gain} onChange={(v) => onParamChange('eq.high.gain', v)} label="Hi" min={-12} max={12} color={color} />
+        </div>
       </div>
 
-      {/* Expand toggle for EQ/Comp/Sends */}
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="flex items-center justify-center gap-0.5 w-full py-0.5 text-[7px] text-zinc-600 hover:text-zinc-400 transition-colors border-t border-b border-zinc-700/30"
-      >
-        {expanded ? <ChevronDown size={8} /> : <ChevronRight size={8} />}
-        {expanded ? 'LESS' : 'MORE'}
-      </button>
+      {/* ── AUX Sends (always visible) ── */}
+      <div className="w-full px-1 py-1 border-t border-zinc-700/30">
+        <div className="text-[7px] text-zinc-500 font-bold text-center mb-0.5">SEND</div>
+        <div className="grid grid-cols-2 gap-x-[2px] gap-y-0.5 justify-items-center">
+          <MiniKnob value={state.auxSends.delay} onChange={(v) => onParamChange('auxSends.delay', v)} label="Dly" color="#60a5fa" />
+          <MiniKnob value={state.auxSends.chorus} onChange={(v) => onParamChange('auxSends.chorus', v)} label="Chr" color="#a78bfa" />
+          <MiniKnob value={state.auxSends.reverb} onChange={(v) => onParamChange('auxSends.reverb', v)} label="Rev" color="#34d399" />
+          <MiniKnob value={state.auxSends.flanger} onChange={(v) => onParamChange('auxSends.flanger', v)} label="Flg" color="#fb923c" />
+        </div>
+      </div>
 
-      {/* Expandable: EQ, Comp, AUX sends */}
-      {expanded && (
-        <div className="flex flex-col items-center gap-1 py-1.5 border-b border-zinc-700/30 w-full px-1">
-          {/* EQ */}
-          <div className="text-[7px] text-zinc-500 font-bold">EQ</div>
-          <div className="flex gap-px justify-center">
-            <MiniKnob value={state.eq.low.gain} onChange={(v) => onParamChange('eq.low.gain', v)} label="L" min={-12} max={12} color={color} />
-            <MiniKnob value={state.eq.mid.gain} onChange={(v) => onParamChange('eq.mid.gain', v)} label="M" min={-12} max={12} color={color} />
-            <MiniKnob value={state.eq.high.gain} onChange={(v) => onParamChange('eq.high.gain', v)} label="H" min={-12} max={12} color={color} />
-          </div>
-          {/* Compressor */}
-          <div className="text-[7px] text-zinc-500 font-bold mt-0.5">COMP</div>
-          <div className="flex gap-px justify-center">
-            <MiniKnob value={state.compressor.threshold} onChange={(v) => onParamChange('compressor.threshold', v)} label="T" min={-60} max={0} color={color} />
-            <MiniKnob value={state.compressor.ratio} onChange={(v) => onParamChange('compressor.ratio', v)} label="R" min={1} max={20} color={color} />
-          </div>
-          {/* AUX sends */}
-          <div className="text-[7px] text-zinc-500 font-bold mt-0.5">SEND</div>
-          <div className="grid grid-cols-2 gap-px">
-            <MiniKnob value={state.auxSends.delay} onChange={(v) => onParamChange('auxSends.delay', v)} label="D" color="#60a5fa" />
-            <MiniKnob value={state.auxSends.chorus} onChange={(v) => onParamChange('auxSends.chorus', v)} label="C" color="#a78bfa" />
-            <MiniKnob value={state.auxSends.reverb} onChange={(v) => onParamChange('auxSends.reverb', v)} label="R" color="#34d399" />
-            <MiniKnob value={state.auxSends.flanger} onChange={(v) => onParamChange('auxSends.flanger', v)} label="F" color="#fb923c" />
-          </div>
+      {/* ── Compressor (collapsible) ── */}
+      <button
+        onClick={() => setShowComp(!showComp)}
+        className="flex items-center justify-center gap-0.5 w-full py-0.5 text-[7px] text-zinc-600 hover:text-zinc-400 transition-colors border-t border-zinc-700/30"
+      >
+        {showComp ? <ChevronDown size={8} /> : <ChevronRight size={8} />}
+        COMP
+      </button>
+      {showComp && (
+        <div className="flex justify-center gap-[2px] pb-1">
+          <MiniKnob value={state.compressor.threshold} onChange={(v) => onParamChange('compressor.threshold', v)} label="Thr" min={-60} max={0} color={color} />
+          <MiniKnob value={state.compressor.ratio} onChange={(v) => onParamChange('compressor.ratio', v)} label="Rat" min={1} max={20} color={color} />
+          <MiniKnob value={state.compressor.makeup} onChange={(v) => onParamChange('compressor.makeup', v)} label="Mkp" min={0.25} max={4} color={color} />
         </div>
       )}
 
-      {/* Fader + Meter area */}
-      <div className="flex items-end gap-0.5 px-1 pt-1 pb-1.5 flex-1">
+      {/* ── Pan slider ── */}
+      <div className="w-full border-t border-zinc-700/30 py-1">
+        <PanSlider value={state.pan} onChange={(v) => onParamChange('pan', v)} />
+      </div>
+
+      {/* ── Fader + Meter ── */}
+      <div className="flex items-end gap-0.5 px-1 pt-1 pb-1 flex-1 border-t border-zinc-700/30">
         <Fader
           value={state.volume}
           onChange={(v) => onParamChange('volume', v)}
@@ -186,13 +218,13 @@ export const ProChannelStrip = React.memo(function ProChannelStrip({
 
       {/* dB readout */}
       <div className="text-[8px] text-zinc-500 font-mono pb-1">
-        {state.volume > 0 ? `${(20 * Math.log10(state.volume)).toFixed(0)}` : '-inf'}
+        {state.volume > 0 ? `${(20 * Math.log10(state.volume)).toFixed(0)}dB` : '-inf'}
       </div>
     </div>
   );
 });
 
-/** Tiny knob for expandable sections */
+/** Tiny knob for EQ/Send/Comp sections */
 function MiniKnob({
   value,
   onChange,
@@ -210,7 +242,7 @@ function MiniKnob({
 }) {
   return (
     <div className="flex flex-col items-center">
-      <Knob value={value} onChange={onChange} label="" min={min} max={max} size={18} color={color} />
+      <Knob value={value} onChange={onChange} label="" min={min} max={max} size={20} color={color} />
       <span className="text-[6px] text-zinc-500 leading-none mt-0.5">{label}</span>
     </div>
   );
