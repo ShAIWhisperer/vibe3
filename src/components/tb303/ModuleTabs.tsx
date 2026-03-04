@@ -1,4 +1,4 @@
-import { type ModuleId, MODULE_CONFIGS } from '@/hooks/use-multi-synth-engine';
+import { type ModuleId, type ModuleState, MODULE_CONFIGS } from '@/hooks/use-multi-synth-engine';
 import { Music, Zap, Waves } from 'lucide-react';
 
 const MODULE_ICONS: Record<ModuleId, typeof Music> = {
@@ -10,7 +10,7 @@ const MODULE_ICONS: Record<ModuleId, typeof Music> = {
 interface ModuleTabsProps {
   activeModule: ModuleId;
   onModuleChange: (id: ModuleId) => void;
-  moduleStates: Record<ModuleId, {pattern: {active: boolean;}[];}>;
+  moduleStates: Record<ModuleId, ModuleState>;
 }
 
 export function ModuleTabs({ activeModule, onModuleChange, moduleStates }: ModuleTabsProps) {
@@ -22,7 +22,8 @@ export function ModuleTabs({ activeModule, onModuleChange, moduleStates }: Modul
         const config = MODULE_CONFIGS[id];
         const Icon = MODULE_ICONS[id];
         const isActive = activeModule === id;
-        const activeSteps = moduleStates[id].pattern.filter((s) => s.active).length;
+        const activeSlot = moduleStates[id].patternBank[moduleStates[id].activePatternIndex];
+        const activeSteps = activeSlot.pattern.filter((s) => s.active).length;
 
         return (
           <button

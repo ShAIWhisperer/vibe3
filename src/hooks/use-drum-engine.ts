@@ -16,10 +16,13 @@ export interface DrumChannelMix {
   mute: boolean;
 }
 
+export const DRUM_PATTERN_BANK_SIZE = 8;
+
 // Full drum state
 export interface DrumState {
   kitId: string;
-  pattern: DrumStep[];
+  patternBank: DrumStep[][];      // 8 patterns, each is DrumStep[16]
+  activePatternIndex: number;     // 0-7
   channelMix: DrumChannelMix[];
   masterVolume: number;
   swing: number;  // 0-100 (percentage)
@@ -56,7 +59,11 @@ export function useDrumEngine() {
   
   const [drumState, setDrumState] = useState<DrumState>({
     kitId: 'house',
-    pattern: getDefaultPattern(),
+    patternBank: [
+      getDefaultPattern(),
+      ...Array(DRUM_PATTERN_BANK_SIZE - 1).fill(null).map(() => createEmptyPattern())
+    ],
+    activePatternIndex: 0,
     channelMix: createDefaultChannelMix(),
     masterVolume: 1.0,
     swing: 15,
@@ -184,8 +191,9 @@ export function useDrumEngine() {
     const ctx = audioCtxRef.current;
     const synth = drumSynthRef.current;
     if (!ctx || !synth || !drumState.enabled) return;
-    
-    const step = drumState.pattern[stepIndex];
+
+    const activePattern = drumState.patternBank[drumState.activePatternIndex];
+    const step = activePattern[stepIndex];
     if (!step) return;
     
     const kit = GENRE_KITS.find(k => k.id === drumState.kitId) || GENRE_KITS[0];
@@ -212,43 +220,45 @@ export function useDrumEngine() {
     setDrumState(prev => ({ ...prev, kitId }));
   }, []);
   
-  // Toggle step
+  // Toggle step — targets active pattern in bank
   const toggleStep = useCallback((stepIndex: number, channelIndex: number, velocity: number = 0.8) => {
     setDrumState(prev => {
-      const newPattern = [...prev.pattern];
+      const bank = [...prev.patternBank];
+      const newPattern = [...bank[prev.activePatternIndex]];
       const step = { ...newPattern[stepIndex] };
       const sounds = { ...step.sounds };
-      
+
       if (sounds[channelIndex]?.active) {
-        // Turn off
         sounds[channelIndex] = { active: false, velocity: 0 };
       } else {
-        // Turn on
         sounds[channelIndex] = { active: true, velocity };
       }
-      
+
       step.sounds = sounds;
       newPattern[stepIndex] = step;
-      
-      return { ...prev, pattern: newPattern };
+      bank[prev.activePatternIndex] = newPattern;
+
+      return { ...prev, patternBank: bank };
     });
   }, []);
   
-  // Set step velocity
+  // Set step velocity — targets active pattern in bank
   const setStepVelocity = useCallback((stepIndex: number, channelIndex: number, velocity: number) => {
     setDrumState(prev => {
-      const newPattern = [...prev.pattern];
+      const bank = [...prev.patternBank];
+      const newPattern = [...bank[prev.activePatternIndex]];
       const step = { ...newPattern[stepIndex] };
       const sounds = { ...step.sounds };
-      
+
       if (sounds[channelIndex]) {
         sounds[channelIndex] = { ...sounds[channelIndex], velocity };
       }
-      
+
       step.sounds = sounds;
       newPattern[stepIndex] = step;
-      
-      return { ...prev, pattern: newPattern };
+      bank[prev.activePatternIndex] = newPattern;
+
+      return { ...prev, patternBank: bank };
     });
   }, []);
   
@@ -296,19 +306,62 @@ export function useDrumEngine() {
     setDrumState(prev => ({ ...prev, enabled }));
   }, []);
   
-  // Set full pattern
+  // Set full pattern — writes to active slot in patternBank
   const setPattern = useCallback((pattern: DrumStep[]) => {
-    setDrumState(prev => ({ ...prev, pattern }));
+    setDrumState(prev => {
+      const bank = [...prev.patternBank];
+      bank[prev.activePatternIndex] = pattern;
+      return { ...prev, patternBank: bank };
+    });
   }, []);
-  
-  // Clear pattern
+
+  // Clear pattern — clears active slot
   const clearPattern = useCallback(() => {
-    setDrumState(prev => ({ ...prev, pattern: createEmptyPattern() }));
+    setDrumState(prev => {
+      const bank = [...prev.patternBank];
+      bank[prev.activePatternIndex] = createEmptyPattern();
+      return { ...prev, patternBank: bank };
+    });
   }, []);
   
-  // Load full state (for session restore)
+  // Pattern bank actions
+  const setActiveDrumPattern = useCallback((index: number) => {
+    setDrumState(prev => ({ ...prev, activePatternIndex: index }));
+  }, []);
+
+  const copyDrumPattern = useCallback((from: number, to: number) => {
+    setDrumState(prev => {
+      const bank = [...prev.patternBank];
+      bank[to] = JSON.parse(JSON.stringify(bank[from]));
+      return { ...prev, patternBank: bank };
+    });
+  }, []);
+
+  const clearDrumPatternSlot = useCallback((index: number) => {
+    setDrumState(prev => {
+      const bank = [...prev.patternBank];
+      bank[index] = createEmptyPattern();
+      return { ...prev, patternBank: bank };
+    });
+  }, []);
+
+  // Load full state (for session restore), with v3→v4 migration
   const loadState = useCallback((state: DrumState) => {
-    setDrumState(state);
+    // v3→v4 migration: single pattern → patternBank
+    const migrated = { ...state } as any;
+    if (migrated.pattern && !migrated.patternBank) {
+      migrated.patternBank = [
+        migrated.pattern,
+        ...Array(DRUM_PATTERN_BANK_SIZE - 1).fill(null).map(() => createEmptyPattern())
+      ];
+      migrated.activePatternIndex = 0;
+      delete migrated.pattern;
+    }
+    // Ensure activePatternIndex exists
+    if (migrated.activePatternIndex === undefined) {
+      migrated.activePatternIndex = 0;
+    }
+    setDrumState(migrated as DrumState);
     
     // Apply mixer settings
     if (masterGainRef.current && audioCtxRef.current) {
@@ -371,18 +424,22 @@ export function useDrumEngine() {
   // Get current kit info
   const currentKit = GENRE_KITS.find(k => k.id === drumState.kitId) || GENRE_KITS[0];
 
+  // Convenience: active pattern from bank
+  const activePattern = drumState.patternBank[drumState.activePatternIndex];
+
   return {
     // State
     drumState,
     currentKit,
-    
+    pattern: activePattern, // convenience getter for active pattern
+
     // Audio
     initAudio,
     connectToMixer,
     connectToContext,
     playSound,
     scheduleStep,
-    
+
     // Setters
     setKit,
     toggleStep,
@@ -394,6 +451,11 @@ export function useDrumEngine() {
     setPattern,
     clearPattern,
     loadState,
+
+    // Pattern bank
+    setActiveDrumPattern,
+    copyDrumPattern,
+    clearDrumPatternSlot,
 
     // Pro Mixer integration
     connectToProMixer,

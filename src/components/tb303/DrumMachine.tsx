@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { type DrumState } from '@/hooks/use-drum-engine';
+import { type DrumState, type DrumStep } from '@/hooks/use-drum-engine';
 import { DrumSequencer } from './DrumSequencer';
+import { PatternSelector } from './PatternSelector';
 import { GENRE_KITS, type GenreKit } from '@/utils/drum-samples';
 import { getRandomDrumPattern, getPatternForKit, getSuggestedBpm, getSuggestedSwing } from '@/utils/drum-patterns';
 import { Drum, ChevronDown, ChevronUp, Trash2, Shuffle, Power, Volume2 } from 'lucide-react';
@@ -11,6 +12,7 @@ interface DrumMachineProps {
   // Drum engine from parent
   drumState: DrumState;
   currentKit: GenreKit;
+  pattern: DrumStep[]; // active pattern from bank
   playSound: (channel: number, velocity?: number) => void;
   setKit: (kitId: string) => void;
   toggleStep: (step: number, channel: number, velocity?: number) => void;
@@ -18,9 +20,13 @@ interface DrumMachineProps {
   setMasterVolume: (vol: number) => void;
   setSwing: (swing: number) => void;
   setEnabled: (enabled: boolean) => void;
-  setPattern: (pattern: DrumState['pattern']) => void;
+  setPattern: (pattern: DrumStep[]) => void;
   clearPattern: () => void;
   onBpmChange?: (bpm: number) => void;
+  // Pattern bank
+  setActiveDrumPattern: (index: number) => void;
+  copyDrumPattern: (from: number, to: number) => void;
+  clearDrumPatternSlot: (index: number) => void;
 }
 
 export function DrumMachine({
@@ -28,6 +34,7 @@ export function DrumMachine({
   isPlaying,
   drumState,
   currentKit: propKit,
+  pattern,
   playSound,
   setKit,
   toggleStep,
@@ -37,7 +44,10 @@ export function DrumMachine({
   setEnabled,
   setPattern,
   clearPattern,
-  onBpmChange
+  onBpmChange,
+  setActiveDrumPattern,
+  copyDrumPattern,
+  clearDrumPatternSlot
 }: DrumMachineProps) {
   const [isExpanded, setIsExpanded] = useState(true);
   const [showKitMenu, setShowKitMenu] = useState(false);
@@ -218,11 +228,26 @@ export function DrumMachine({
             <span>SWING: {currentKit.swing}% suggested</span>
             <span>TRACKS: {currentKit.tracks.length}</span>
           </div>
-          
+
+          {/* Pattern Bank Selector */}
+          <div className="mb-2">
+            <PatternSelector
+              bankSize={8}
+              activeIndex={drumState.activePatternIndex}
+              onSelect={(i) => setActiveDrumPattern(i)}
+              onCopy={(from, to) => copyDrumPattern(from, to)}
+              onClear={(i) => clearDrumPatternSlot(i)}
+              color="#f59e0b"
+              hasContent={drumState.patternBank.map(p =>
+                p.some(step => Object.values(step.sounds).some(s => s.active))
+              )}
+            />
+          </div>
+
           {/* Sequencer grid */}
           <DrumSequencer
           kit={currentKit}
-          pattern={drumState.pattern}
+          pattern={pattern}
           channelMix={drumState.channelMix}
           currentStep={currentStep}
           isPlaying={isPlaying}

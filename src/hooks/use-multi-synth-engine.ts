@@ -96,12 +96,46 @@ const DEFAULT_MIXER: MixerState = {
   master: 0.8
 };
 
+export const PATTERN_BANK_SIZE = 8;
+
+// Arrangement / Song mode types
+export type ArrangementChannelId = ModuleId | 'drums';
+
+export interface ArrangementBlock {
+  bass: number | null;    // 0-7 = pattern slot, null = silent
+  lead: number | null;
+  arp: number | null;
+  drums: number | null;
+}
+
+export type PlaybackMode = 'pattern' | 'song';
+
+export interface ArrangementState {
+  blocks: ArrangementBlock[];
+  loop: boolean;
+  playbackMode: PlaybackMode;
+}
+
+export const MAX_ARRANGEMENT_BLOCKS = 64;
+
+const DEFAULT_ARRANGEMENT: ArrangementState = {
+  blocks: Array(4).fill(null).map(() => ({ bass: 0, lead: 0, arp: 0, drums: 0 })),
+  loop: true,
+  playbackMode: 'pattern'
+};
+
+// A single pattern slot (what was previously the whole pattern data)
+export interface PatternSlot {
+  pattern: Step[];
+  automation: AutomationState;
+}
+
 // Module state
 export interface ModuleState {
   params: TB303Params;
-  pattern: Step[];
+  patternBank: PatternSlot[];    // 8 slots
+  activePatternIndex: number;    // 0-7
   modulators: ModulatorState;
-  automation: AutomationState;
 }
 
 // Multi-module session data for save/load
@@ -115,9 +149,10 @@ export interface MultiModuleSessionData {
   modules: Record<ModuleId, ModuleState>;
   mixer: MixerState;
   proMixer?: ProMixerState;
+  arrangement?: ArrangementState;
 }
 
-export const MULTI_SESSION_VERSION = 3;
+export const MULTI_SESSION_VERSION = 5;
 
 // Default params
 const DEFAULT_PARAMS: TB303Params = {
@@ -214,13 +249,30 @@ const DEFAULT_AUTOMATION: AutomationState = {
   overdrive: createEmptyLane()
 };
 
-const createDefaultPattern = (): Step[] => 
+const createDefaultPattern = (): Step[] =>
   Array(16).fill(null).map((_, i) => ({
     note: 36 + (i % 12),
     active: i % 4 === 0,
     accent: i % 8 === 0,
     slide: false
   }));
+
+export const createEmptyPatternSlot = (): PatternSlot => ({
+  pattern: Array(16).fill(null).map(() => ({
+    note: 36,
+    active: false,
+    accent: false,
+    slide: false
+  })),
+  automation: {
+    cutoff: createEmptyLane(),
+    resonance: createEmptyLane(),
+    envMod: createEmptyLane(),
+    decay: createEmptyLane(),
+    accent: createEmptyLane(),
+    overdrive: createEmptyLane()
+  }
+});
 
 // SVF Filter processor code - unique name for multi-synth engine
 const SVF_PROCESSOR_CODE = `
@@ -507,11 +559,14 @@ export function useMultiSynthEngine() {
   const [moduleStates, setModuleStates] = useState<Record<ModuleId, ModuleState>>(() => {
     const createModuleState = (id: ModuleId): ModuleState => ({
       params: { ...DEFAULT_PARAMS, ...MODULE_CONFIGS[id].defaultParams },
-      pattern: createDefaultPattern(),
+      patternBank: [
+        { pattern: createDefaultPattern(), automation: { ...DEFAULT_AUTOMATION } },
+        ...Array(PATTERN_BANK_SIZE - 1).fill(null).map(() => createEmptyPatternSlot())
+      ],
+      activePatternIndex: 0,
       modulators: { ...DEFAULT_MODULATORS },
-      automation: { ...DEFAULT_AUTOMATION }
     });
-    
+
     return {
       bass: createModuleState('bass'),
       lead: createModuleState('lead'),
@@ -547,6 +602,18 @@ export function useMultiSynthEngine() {
   const patternStartTimeRef = useRef(0);
   const envIntervalRef = useRef<number | null>(null);
   const lastStepUpdateRef = useRef(0);
+
+  // Arrangement / Song mode state
+  const [arrangement, setArrangement] = useState<ArrangementState>(DEFAULT_ARRANGEMENT);
+  const arrangementRef = useRef<ArrangementState>(DEFAULT_ARRANGEMENT);
+  useEffect(() => { arrangementRef.current = arrangement; }, [arrangement]);
+
+  const currentBlockIndexRef = useRef(0);
+  const [currentBlockIndex, setCurrentBlockIndex] = useState(0);
+  const shouldStopRef = useRef(false);
+
+  // Drum arrangement callback (switches drum pattern per block)
+  const drumArrangementCallbackRef = useRef<((patternIndex: number | null) => void) | null>(null);
   
   // Initialize audio
   const initAudio = useCallback(async () => {
@@ -642,7 +709,8 @@ export function useMultiSynthEngine() {
         
         // Calculate filter values
         const p = state.params;
-        const auto = state.automation;
+        const activeSlot = state.patternBank[state.activePatternIndex];
+        const auto = activeSlot.automation;
         const mods = state.modulators;
         
         // Get base values (from automation or params)
@@ -736,6 +804,37 @@ export function useMultiSynthEngine() {
     drumSchedulerRef.current = scheduler;
   }, []);
   
+  // Apply an arrangement block: switch patterns for all channels
+  const applyArrangementBlock = useCallback((blockIndex: number) => {
+    const block = arrangementRef.current.blocks[blockIndex];
+    if (!block) return;
+    const modules: ModuleId[] = ['bass', 'lead', 'arp'];
+
+    // Immediate ref update for scheduler hot path
+    for (const id of modules) {
+      if (block[id] !== null) {
+        moduleStatesRef.current[id] = { ...moduleStatesRef.current[id], activePatternIndex: block[id]! };
+      }
+    }
+
+    // Drum update via callback
+    if (drumArrangementCallbackRef.current) {
+      drumArrangementCallbackRef.current(block.drums);
+    }
+
+    // React state update for UI
+    setModuleStates(prev => {
+      const updated = { ...prev };
+      for (const id of modules) {
+        if (block[id] !== null) {
+          updated[id] = { ...updated[id], activePatternIndex: block[id]! };
+        }
+      }
+      return updated;
+    });
+    setCurrentBlockIndex(blockIndex);
+  }, []);
+
   // Schedule notes for all modules
   const scheduleNotes = useCallback((time: number, stepIndex: number, prevStepIndex: number) => {
     const modules: ModuleId[] = ['bass', 'lead', 'arp'];
@@ -746,14 +845,21 @@ export function useMultiSynthEngine() {
       const channel = mixerRef.current[id];
       
       if (!voice) continue;
-      
+
       // Check if should play
       const anySolo = Object.values(mixerRef.current).some(ch => typeof ch === 'object' && ch.solo);
       const shouldPlay = !channel.mute && (!anySolo || channel.solo);
       if (!shouldPlay) continue;
-      
-      const step = state.pattern[stepIndex];
-      const prevStep = state.pattern[prevStepIndex];
+
+      // Song mode: skip silent channels
+      if (arrangementRef.current.playbackMode === 'song') {
+        const block = arrangementRef.current.blocks[currentBlockIndexRef.current];
+        if (block && block[id] === null) continue;
+      }
+
+      const activePattern = state.patternBank[state.activePatternIndex];
+      const step = activePattern.pattern[stepIndex];
+      const prevStep = activePattern.pattern[prevStepIndex];
       
       if (!step.active) continue;
       
@@ -776,9 +882,13 @@ export function useMultiSynthEngine() {
       }
     }
     
-    // Schedule drums via external callback
+    // Schedule drums via external callback (skip if silent in song mode)
     if (drumSchedulerRef.current) {
-      drumSchedulerRef.current(stepIndex, time);
+      const skipDrums = arrangementRef.current.playbackMode === 'song' &&
+        arrangementRef.current.blocks[currentBlockIndexRef.current]?.drums === null;
+      if (!skipDrums) {
+        drumSchedulerRef.current(stepIndex, time);
+      }
     }
   }, []);
   
@@ -807,9 +917,28 @@ export function useMultiSynthEngine() {
       }
       
       nextNoteTimeRef.current += secondsPerBeat;
-      currentStepRef.current = (currentStepRef.current + 1) % 16;
+
+      // Arrangement boundary detection
+      const nextStep = (currentStepRef.current + 1) % 16;
+      if (nextStep === 0 && arrangementRef.current.playbackMode === 'song') {
+        const arr = arrangementRef.current;
+        const nextBlock = currentBlockIndexRef.current + 1;
+        if (nextBlock >= arr.blocks.length) {
+          if (arr.loop) {
+            currentBlockIndexRef.current = 0;
+            applyArrangementBlock(0);
+          } else {
+            shouldStopRef.current = true;
+          }
+        } else {
+          currentBlockIndexRef.current = nextBlock;
+          applyArrangementBlock(nextBlock);
+        }
+        patternStartTimeRef.current = nextNoteTimeRef.current;
+      }
+      currentStepRef.current = nextStep;
     }
-  }, [scheduleNotes]);
+  }, [scheduleNotes, applyArrangementBlock]);
   
   // Start playback
   const start = useCallback(async () => {
@@ -828,14 +957,40 @@ export function useMultiSynthEngine() {
     playbackPositionRef.current = 0;
     setCurrentStep(0);
     setIsPlaying(true);
-    
+
+    // Song mode: reset to block 0 and apply
+    shouldStopRef.current = false;
+    if (arrangementRef.current.playbackMode === 'song') {
+      currentBlockIndexRef.current = 0;
+      setCurrentBlockIndex(0);
+      applyArrangementBlock(0);
+    }
+
     const tick = () => {
-      if (!audioCtxRef.current) return;
+      if (!audioCtxRef.current || shouldStopRef.current) {
+        if (shouldStopRef.current) {
+          // Inline stop logic to avoid stale closure
+          if (timerRef.current) {
+            cancelAnimationFrame(timerRef.current);
+            timerRef.current = null;
+          }
+          setIsPlaying(false);
+          setCurrentStep(0);
+          playbackPositionRef.current = 0;
+          setPlaybackPosition(0);
+          currentBlockIndexRef.current = 0;
+          setCurrentBlockIndex(0);
+          shouldStopRef.current = false;
+          const mods: ModuleId[] = ['bass', 'lead', 'arp'];
+          for (const id of mods) voicesRef.current[id]?.stopNote();
+        }
+        return;
+      }
       scheduler();
       timerRef.current = requestAnimationFrame(tick);
     };
     tick();
-  }, [initAudio, scheduler]);
+  }, [initAudio, scheduler, applyArrangementBlock]);
   
   // Stop playback
   const stop = useCallback(() => {
@@ -847,7 +1002,12 @@ export function useMultiSynthEngine() {
     setCurrentStep(0);
     playbackPositionRef.current = 0;
     setPlaybackPosition(0);
-    
+
+    // Reset arrangement state
+    currentBlockIndexRef.current = 0;
+    setCurrentBlockIndex(0);
+    shouldStopRef.current = false;
+
     // Stop all voices
     const modules: ModuleId[] = ['bass', 'lead', 'arp'];
     for (const id of modules) {
@@ -887,11 +1047,15 @@ export function useMultiSynthEngine() {
     }
   }, [activeModule]);
   
-  // Set pattern for active module
+  // Set pattern for active module (writes to active slot in patternBank)
   const setPattern = useCallback((pattern: Step[]) => {
     setModuleStates(prev => {
       const updated = { ...prev };
-      updated[activeModule] = { ...updated[activeModule], pattern };
+      const mod = { ...updated[activeModule] };
+      const bank = [...mod.patternBank];
+      bank[mod.activePatternIndex] = { ...bank[mod.activePatternIndex], pattern };
+      mod.patternBank = bank;
+      updated[activeModule] = mod;
       return updated;
     });
   }, [activeModule]);
@@ -917,13 +1081,19 @@ export function useMultiSynthEngine() {
     }
   }, []);
   
-  // Set patterns for all modules (for emotion-to-music)
+  // Set patterns for all modules (for emotion-to-music) — writes to active slots
   const setAllPatterns = useCallback((patterns: Record<ModuleId, Step[]>) => {
-    setModuleStates(prev => ({
-      bass: { ...prev.bass, pattern: patterns.bass },
-      lead: { ...prev.lead, pattern: patterns.lead },
-      arp: { ...prev.arp, pattern: patterns.arp }
-    }));
+    setModuleStates(prev => {
+      const updated: Record<string, ModuleState> = {};
+      for (const id of ['bass', 'lead', 'arp'] as ModuleId[]) {
+        const mod = { ...prev[id] };
+        const bank = [...mod.patternBank];
+        bank[mod.activePatternIndex] = { ...bank[mod.activePatternIndex], pattern: patterns[id] };
+        mod.patternBank = bank;
+        updated[id] = mod;
+      }
+      return updated as Record<ModuleId, ModuleState>;
+    });
   }, []);
   
   // Set params for specific module
@@ -950,58 +1120,68 @@ export function useMultiSynthEngine() {
     const targetModule = moduleId ?? activeModule;
     setModuleStates(prev => {
       const updated = { ...prev };
-      const currentPattern = updated[targetModule].pattern;
-      
+      const mod = { ...updated[targetModule] };
+      const bank = [...mod.patternBank];
+      const slot = bank[mod.activePatternIndex];
+      const currentPattern = slot.pattern;
+
       // Transpose all notes, clamping to valid MIDI range (24-96)
       const transposedPattern = currentPattern.map(step => ({
         ...step,
         note: Math.max(24, Math.min(96, step.note + semitones))
       }));
-      
-      updated[targetModule] = {
-        ...updated[targetModule],
-        pattern: transposedPattern
-      };
+
+      bank[mod.activePatternIndex] = { ...slot, pattern: transposedPattern };
+      mod.patternBank = bank;
+      updated[targetModule] = mod;
       return updated;
     });
   }, [activeModule]);
   
-  // Automation
+  // Automation — targets active slot in patternBank
   const setAutomation = useCallback((param: AutomationParam, points: number[]) => {
     setModuleStates(prev => {
       const updated = { ...prev };
-      updated[activeModule] = {
-        ...updated[activeModule],
-        automation: {
-          ...updated[activeModule].automation,
-          [param]: { enabled: true, points }
-        }
+      const mod = { ...updated[activeModule] };
+      const bank = [...mod.patternBank];
+      const slot = bank[mod.activePatternIndex];
+      bank[mod.activePatternIndex] = {
+        ...slot,
+        automation: { ...slot.automation, [param]: { enabled: true, points } }
       };
+      mod.patternBank = bank;
+      updated[activeModule] = mod;
       return updated;
     });
   }, [activeModule]);
-  
+
   const clearAutomation = useCallback((param: AutomationParam) => {
     setModuleStates(prev => {
       const updated = { ...prev };
-      updated[activeModule] = {
-        ...updated[activeModule],
-        automation: {
-          ...updated[activeModule].automation,
-          [param]: createEmptyLane()
-        }
+      const mod = { ...updated[activeModule] };
+      const bank = [...mod.patternBank];
+      const slot = bank[mod.activePatternIndex];
+      bank[mod.activePatternIndex] = {
+        ...slot,
+        automation: { ...slot.automation, [param]: createEmptyLane() }
       };
+      mod.patternBank = bank;
+      updated[activeModule] = mod;
       return updated;
     });
   }, [activeModule]);
-  
+
   const clearAllAutomation = useCallback(() => {
     setModuleStates(prev => {
       const updated = { ...prev };
-      updated[activeModule] = {
-        ...updated[activeModule],
+      const mod = { ...updated[activeModule] };
+      const bank = [...mod.patternBank];
+      bank[mod.activePatternIndex] = {
+        ...bank[mod.activePatternIndex],
         automation: { ...DEFAULT_AUTOMATION }
       };
+      mod.patternBank = bank;
+      updated[activeModule] = mod;
       return updated;
     });
   }, [activeModule]);
@@ -1027,6 +1207,121 @@ export function useMultiSynthEngine() {
     });
   }, [activeModule]);
   
+  // Pattern bank actions
+  const setActivePattern = useCallback((index: number) => {
+    setModuleStates(prev => {
+      const updated = { ...prev };
+      updated[activeModule] = { ...updated[activeModule], activePatternIndex: index };
+      return updated;
+    });
+  }, [activeModule]);
+
+  // Copy within same module
+  const copyPattern = useCallback((fromIndex: number, toIndex: number) => {
+    setModuleStates(prev => {
+      const updated = { ...prev };
+      const mod = { ...updated[activeModule] };
+      const bank = [...mod.patternBank];
+      bank[toIndex] = JSON.parse(JSON.stringify(bank[fromIndex]));
+      mod.patternBank = bank;
+      updated[activeModule] = mod;
+      return updated;
+    });
+  }, [activeModule]);
+
+  // Copy across modules (e.g., bass pattern 1 → lead pattern 3)
+  const copyPatternCrossModule = useCallback((
+    fromModule: ModuleId, fromIndex: number,
+    toModule: ModuleId, toIndex: number
+  ) => {
+    setModuleStates(prev => {
+      const updated = { ...prev };
+      const srcSlot = prev[fromModule].patternBank[fromIndex];
+      const destMod = { ...updated[toModule] };
+      const bank = [...destMod.patternBank];
+      bank[toIndex] = JSON.parse(JSON.stringify(srcSlot));
+      destMod.patternBank = bank;
+      updated[toModule] = destMod;
+      return updated;
+    });
+  }, []);
+
+  const clearPatternSlot = useCallback((index: number) => {
+    setModuleStates(prev => {
+      const updated = { ...prev };
+      const mod = { ...updated[activeModule] };
+      const bank = [...mod.patternBank];
+      bank[index] = createEmptyPatternSlot();
+      mod.patternBank = bank;
+      updated[activeModule] = mod;
+      return updated;
+    });
+  }, [activeModule]);
+
+  // ── Arrangement mutators ──
+  const setPlaybackMode = useCallback((mode: PlaybackMode) => {
+    setArrangement(prev => ({ ...prev, playbackMode: mode }));
+  }, []);
+
+  const setArrangementLoop = useCallback((loop: boolean) => {
+    setArrangement(prev => ({ ...prev, loop }));
+  }, []);
+
+  const setArrangementCell = useCallback((blockIdx: number, channel: ArrangementChannelId, patternIdx: number | null) => {
+    setArrangement(prev => {
+      const blocks = [...prev.blocks];
+      blocks[blockIdx] = { ...blocks[blockIdx], [channel]: patternIdx };
+      return { ...prev, blocks };
+    });
+  }, []);
+
+  const addArrangementBlock = useCallback(() => {
+    setArrangement(prev => {
+      if (prev.blocks.length >= MAX_ARRANGEMENT_BLOCKS) return prev;
+      const last = prev.blocks[prev.blocks.length - 1];
+      return { ...prev, blocks: [...prev.blocks, { ...last }] };
+    });
+  }, []);
+
+  const removeArrangementBlock = useCallback(() => {
+    setArrangement(prev => {
+      if (prev.blocks.length <= 1) return prev;
+      return { ...prev, blocks: prev.blocks.slice(0, -1) };
+    });
+  }, []);
+
+  const insertArrangementBlock = useCallback((atIdx: number) => {
+    setArrangement(prev => {
+      if (prev.blocks.length >= MAX_ARRANGEMENT_BLOCKS) return prev;
+      const blocks = [...prev.blocks];
+      const template = blocks[atIdx] || { bass: 0, lead: 0, arp: 0, drums: 0 };
+      blocks.splice(atIdx, 0, { ...template });
+      return { ...prev, blocks };
+    });
+  }, []);
+
+  const removeArrangementBlockAt = useCallback((atIdx: number) => {
+    setArrangement(prev => {
+      if (prev.blocks.length <= 1) return prev;
+      const blocks = [...prev.blocks];
+      blocks.splice(atIdx, 1);
+      return { ...prev, blocks };
+    });
+  }, []);
+
+  const copyArrangementBlock = useCallback((fromIdx: number, toIdx: number) => {
+    setArrangement(prev => {
+      const blocks = [...prev.blocks];
+      if (!blocks[fromIdx] || !blocks[toIdx]) return prev;
+      blocks[toIdx] = { ...blocks[fromIdx] };
+      return { ...prev, blocks };
+    });
+  }, []);
+
+  const setDrumArrangementCallback = useCallback((cb: (patternIndex: number | null) => void) => {
+    drumArrangementCallbackRef.current = cb;
+  }, []);
+
   // Cleanup
   useEffect(() => {
     return () => {
@@ -1045,8 +1340,9 @@ export function useMultiSynthEngine() {
     };
   }, [stopEnvelopeProcessor]);
   
-  // Get current module state
+  // Get current module state — derive pattern/automation from active slot
   const currentModuleState = moduleStates[activeModule];
+  const currentSlot = currentModuleState.patternBank[currentModuleState.activePatternIndex];
   
   // Save session - creates a complete snapshot of all modules
   const saveSession = useCallback((name: string): MultiModuleSessionData => {
@@ -1058,31 +1354,53 @@ export function useMultiSynthEngine() {
       activeModule,
       automationEnabled: automationEnabledRef.current,
       modules: JSON.parse(JSON.stringify(moduleStates)), // Deep clone
-      mixer: JSON.parse(JSON.stringify(mixer))
+      mixer: JSON.parse(JSON.stringify(mixer)),
+      arrangement: JSON.parse(JSON.stringify(arrangement))
     };
-  }, [activeModule, moduleStates, mixer]);
+  }, [activeModule, moduleStates, mixer, arrangement]);
   
   // Load session - restores all modules from saved data
   const loadSession = useCallback((session: MultiModuleSessionData) => {
     // Set tempo
     tempoRef.current = session.tempo;
     setTempoState(session.tempo);
-    
+
     // Set active module
     setActiveModule(session.activeModule);
-    
+
     // Set automation enabled
     automationEnabledRef.current = session.automationEnabled;
     setAutomationEnabled(session.automationEnabled);
-    
+
+    // v3 → v4 migration: single pattern → pattern bank
+    const modules: ModuleId[] = ['bass', 'lead', 'arp'];
+    if (!session.version || session.version < 4) {
+      for (const id of modules) {
+        const mod = session.modules[id] as any;
+        if (mod.pattern && !mod.patternBank) {
+          mod.patternBank = [
+            { pattern: mod.pattern, automation: mod.automation || { ...DEFAULT_AUTOMATION } },
+            ...Array(PATTERN_BANK_SIZE - 1).fill(null).map(() => createEmptyPatternSlot())
+          ];
+          mod.activePatternIndex = 0;
+          delete mod.pattern;
+          delete mod.automation;
+        }
+      }
+      session.version = MULTI_SESSION_VERSION;
+    }
+
     // Restore all module states
     setModuleStates(session.modules);
-    
+
     // Restore mixer
     setMixer(session.mixer);
-    
+
+    // Restore arrangement (v4→v5 migration: use default if missing)
+    const arr = session.arrangement || { ...DEFAULT_ARRANGEMENT };
+    setArrangement(arr);
+
     // Apply waveforms and overdrive to voices
-    const modules: ModuleId[] = ['bass', 'lead', 'arp'];
     for (const id of modules) {
       const mod = session.modules[id];
       voicesRef.current[id]?.setWaveform(mod.params.waveform);
@@ -1096,11 +1414,19 @@ export function useMultiSynthEngine() {
     setActiveModule,
     moduleStates,
     
-    // Current module shortcuts
+    // Current module shortcuts (derived from active slot)
     params: currentModuleState.params,
-    pattern: currentModuleState.pattern,
+    pattern: currentSlot.pattern,
     modulators: currentModuleState.modulators,
-    automation: currentModuleState.automation,
+    automation: currentSlot.automation,
+
+    // Pattern bank API
+    activePatternIndex: currentModuleState.activePatternIndex,
+    patternBank: currentModuleState.patternBank,
+    setActivePattern,
+    copyPattern,
+    copyPatternCrossModule,
+    clearPatternSlot,
     
     // Current module setters
     setParams,
@@ -1136,6 +1462,19 @@ export function useMultiSynthEngine() {
     setMixerChannel,
     setMasterVolume,
     
+    // Arrangement / Song mode
+    arrangement,
+    currentBlockIndex,
+    setPlaybackMode,
+    setArrangementLoop,
+    setArrangementCell,
+    addArrangementBlock,
+    removeArrangementBlock,
+    insertArrangementBlock,
+    removeArrangementBlockAt,
+    copyArrangementBlock,
+    setDrumArrangementCallback,
+
     // Drum integration
     setDrumScheduler,
     getAudioContext: () => audioCtxRef.current,

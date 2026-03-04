@@ -20,6 +20,8 @@ import { useProMixer } from '@/hooks/use-pro-mixer';
 import type { ProMixerChannelId } from '@/audio/pro-mixer-types';
 import { SYNTH_CHANNEL_IDS } from '@/audio/pro-mixer-types';
 import { DrumMachine } from './DrumMachine';
+import { ArrangementGrid } from './ArrangementGrid';
+import { PatternSelector } from './PatternSelector';
 import { LearnMode, LearnModeButton } from './LearnMode';
 import { CLASSIC_PATTERNS } from './patterns';
 import { generateRandomMultiChannel } from '@/utils/emotion-to-music';
@@ -74,6 +76,13 @@ export function TB303({ initialSession, initialDrumData }: TB303Props = {}) {
     setModuleParams,
     transposePattern,
 
+    // Pattern bank
+    activePatternIndex,
+    patternBank,
+    setActivePattern,
+    copyPattern,
+    clearPatternSlot,
+
     // Session management
     saveSession,
     loadSession,
@@ -94,6 +103,17 @@ export function TB303({ initialSession, initialDrumData }: TB303Props = {}) {
     mixer,
     setMixerChannel,
     setMasterVolume,
+
+    // Arrangement / Song mode
+    arrangement,
+    currentBlockIndex,
+    setPlaybackMode,
+    setArrangementLoop,
+    setArrangementCell,
+    addArrangementBlock,
+    removeArrangementBlock,
+    copyArrangementBlock,
+    setDrumArrangementCallback,
 
     // Drum integration
     setDrumScheduler,
@@ -153,6 +173,15 @@ export function TB303({ initialSession, initialDrumData }: TB303Props = {}) {
     }
   }, [drumMute, drumEngine.drumState.enabled, drumEngine.scheduleStep, setDrumScheduler]);
 
+  // Wire drum arrangement callback so song mode can switch drum patterns
+  useEffect(() => {
+    setDrumArrangementCallback((patternIndex: number | null) => {
+      if (patternIndex !== null) {
+        drumEngine.setActiveDrumPattern(patternIndex);
+      }
+    });
+  }, [setDrumArrangementCallback, drumEngine.setActiveDrumPattern]);
+
   // Pro Mixer: connect/disconnect when mode changes
   useEffect(() => {
     if (mixerMode === 'pro') {
@@ -190,11 +219,7 @@ export function TB303({ initialSession, initialDrumData }: TB303Props = {}) {
       // Load from shared session
       loadSession(initialSession);
       if (initialDrumData) {
-        drumEngine.setKit(initialDrumData.kitId);
-        drumEngine.setPattern(initialDrumData.pattern);
-        drumEngine.setSwing(initialDrumData.swing);
-        drumEngine.setMasterVolume(initialDrumData.masterVolume);
-        drumEngine.setEnabled(initialDrumData.enabled);
+        drumEngine.loadState(initialDrumData);
       }
       // Restore pro mixer state if present
       if (initialSession.proMixer) {
@@ -608,6 +633,21 @@ export function TB303({ initialSession, initialDrumData }: TB303Props = {}) {
           {/* Sequencer View */}
           {viewMode === 'sequencer' &&
           <>
+              {/* Pattern Bank Selector */}
+              <div className="mb-3 flex justify-center">
+                <PatternSelector
+                  bankSize={8}
+                  activeIndex={activePatternIndex}
+                  onSelect={(i) => setActivePattern(i)}
+                  onCopy={(from, to) => copyPattern(from, to)}
+                  onClear={(i) => clearPatternSlot(i)}
+                  color={activeColor}
+                  hasContent={patternBank.map(slot =>
+                    slot.pattern.some(s => s.active)
+                  )}
+                />
+              </div>
+
               {/* Step Sequencer - 2 rows of 8 on mobile */}
               <div className="mb-3 sm:mb-4">
                 {/* First row: steps 1-8 */}
@@ -747,6 +787,7 @@ export function TB303({ initialSession, initialDrumData }: TB303Props = {}) {
               isPlaying={isPlaying}
               drumState={drumEngine.drumState}
               currentKit={drumEngine.currentKit}
+              pattern={drumEngine.pattern}
               playSound={drumEngine.playSound}
               setKit={drumEngine.setKit}
               toggleStep={drumEngine.toggleStep}
@@ -756,10 +797,28 @@ export function TB303({ initialSession, initialDrumData }: TB303Props = {}) {
               setEnabled={drumEngine.setEnabled}
               setPattern={drumEngine.setPattern}
               clearPattern={drumEngine.clearPattern}
-              onBpmChange={setTempo} />
+              onBpmChange={setTempo}
+              setActiveDrumPattern={drumEngine.setActiveDrumPattern}
+              copyDrumPattern={drumEngine.copyDrumPattern}
+              clearDrumPatternSlot={drumEngine.clearDrumPatternSlot} />
 
           </div>
-          
+
+          {/* Arrangement Grid */}
+          <div className="mb-4">
+            <ArrangementGrid
+              arrangement={arrangement}
+              currentBlockIndex={currentBlockIndex}
+              isPlaying={isPlaying}
+              onSetPlaybackMode={setPlaybackMode}
+              onSetLoop={setArrangementLoop}
+              onSetCell={setArrangementCell}
+              onAddBlock={addArrangementBlock}
+              onRemoveBlock={removeArrangementBlock}
+              onCopyBlock={copyArrangementBlock}
+            />
+          </div>
+
           {/* Tempo - Desktop Only (mobile has floating bar) */}
           <div className="hidden sm:flex items-center justify-between mb-4">
             <div className="flex gap-3">
@@ -1031,11 +1090,7 @@ export function TB303({ initialSession, initialDrumData }: TB303Props = {}) {
         }}
         drumState={drumEngine.drumState}
         onLoadDrumState={(ds) => {
-          drumEngine.setKit(ds.kitId);
-          drumEngine.setPattern(ds.pattern);
-          drumEngine.setSwing(ds.swing);
-          drumEngine.setMasterVolume(ds.masterVolume);
-          drumEngine.setEnabled(ds.enabled);
+          drumEngine.loadState(ds);
         }} />
 
 
