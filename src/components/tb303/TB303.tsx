@@ -444,6 +444,45 @@ export function TB303({ initialSession, initialDrumData }: TB303Props = {}) {
             </button>
           </div>
           
+          {/* Transport Bar - Desktop/Tablet (hidden on mobile, which has sticky bottom bar) */}
+          <div className="hidden sm:flex items-center justify-between mb-4 bg-zinc-800/60 rounded-xl px-4 py-2 border border-zinc-700/50">
+            <button
+            onClick={isPlaying ? stop : start}
+            className={`w-12 h-12 rounded-xl flex items-center justify-center font-bold transition-all ${
+            isPlaying ?
+            'bg-red-600 active:bg-red-500 shadow-lg shadow-red-600/50' :
+            'bg-green-600 active:bg-green-500 shadow-lg shadow-green-600/50'}`
+            }>
+              {isPlaying ? <Square size={22} /> : <Play size={22} className="ml-1" />}
+            </button>
+
+            <div className="flex items-center gap-4">
+              <span className="text-xs font-bold text-zinc-400">TEMPO</span>
+              <input
+              type="range"
+              min={80}
+              max={180}
+              value={tempo}
+              onChange={(e) => setTempo(Number(e.target.value))}
+              className="w-32 accent-orange-500" />
+              <span
+              className="text-xl font-mono font-bold w-12 text-center"
+              style={{ color: activeColor }}>
+                {tempo}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Volume2 size={16} className="text-zinc-400" />
+              <Knob
+                value={mixer.master}
+                onChange={setMasterVolume}
+                label=""
+                size={40}
+                color="#666" />
+            </div>
+          </div>
+
           {/* Module Tabs */}
           <div className="mb-4">
             <ModuleTabs
@@ -819,50 +858,6 @@ export function TB303({ initialSession, initialDrumData }: TB303Props = {}) {
             />
           </div>
 
-          {/* Tempo - Desktop Only (mobile has floating bar) */}
-          <div className="hidden sm:flex items-center justify-between mb-4">
-            <div className="flex gap-3">
-              <button
-              onClick={isPlaying ? stop : start}
-              className={`w-14 h-14 rounded-xl flex items-center justify-center font-bold transition-all ${
-              isPlaying ?
-              'bg-red-600 active:bg-red-500 shadow-lg shadow-red-600/50' :
-              'bg-green-600 active:bg-green-500 shadow-lg shadow-green-600/50'}`
-              }>
-
-                {isPlaying ? <Square size={24} /> : <Play size={24} className="ml-1" />}
-              </button>
-            </div>
-            
-            <div className="flex items-center gap-4">
-              <span className="text-xs font-bold text-zinc-400">TEMPO</span>
-              <input
-              type="range"
-              min={80}
-              max={180}
-              value={tempo}
-              onChange={(e) => setTempo(Number(e.target.value))}
-              className="w-32 accent-orange-500" />
-
-              <span
-              className="text-xl font-mono font-bold w-12 text-center"
-              style={{ color: activeColor }}>
-                {tempo}
-              </span>
-            </div>
-            
-            <div className="flex items-center gap-2">
-              <Volume2 size={16} className="text-zinc-400" />
-              <Knob
-                value={mixer.master}
-                onChange={setMasterVolume}
-                label=""
-                size={40}
-                color="#666" />
-
-            </div>
-          </div>
-          
           {/* Modulation Panel */}
           <ModulationPanel
             modulators={modulators}
